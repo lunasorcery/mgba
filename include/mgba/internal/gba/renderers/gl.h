@@ -136,6 +136,10 @@ struct GBAVideoGLShader {
 struct GBAVideoGLRenderer {
 	struct GBAVideoRenderer d;
 
+#ifdef USE_HLE3D
+	struct HLE3D* hle3d;
+#endif
+
 	uint32_t* temporaryBuffer;
 
 	struct GBAVideoGLBackground bg[4];

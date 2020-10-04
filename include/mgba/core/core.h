@@ -48,6 +48,9 @@ struct mCore {
 	struct mDebugger* debugger;
 	struct mDebuggerSymbols* symbolTable;
 	struct mVideoLogger* videoLogger;
+#ifdef USE_HLE3D
+	struct HLE3D* hle3d;
+#endif
 
 #if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	struct mDirectorySet dirs;

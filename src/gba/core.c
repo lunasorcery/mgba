@@ -21,6 +21,9 @@
 #if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 #include <mgba/internal/gba/renderers/gl.h>
 #endif
+#ifdef USE_HLE3D
+#include <mgba/hle3d/hle3d.h>
+#endif
 #include <mgba/internal/gba/renderers/proxy.h>
 #include <mgba/internal/gba/renderers/video-software.h>
 #include <mgba/internal/gba/savedata.h>
@@ -167,6 +170,9 @@ static bool _GBACoreInit(struct mCore* core) {
 	core->debugger = NULL;
 	core->symbolTable = NULL;
 	core->videoLogger = NULL;
+#ifdef USE_HLE3D
+	core->hle3d = NULL;
+#endif
 	gbacore->overrides = NULL;
 	gbacore->debuggerPlatform = NULL;
 	gbacore->cheatDevice = NULL;
@@ -192,6 +198,16 @@ static bool _GBACoreInit(struct mCore* core) {
 #if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 	GBAVideoGLRendererCreate(&gbacore->glRenderer);
 	gbacore->glRenderer.outputTex = -1;
+#endif
+
+#ifdef USE_HLE3D
+	core->hle3d = malloc(sizeof(struct HLE3D));
+	HLE3DCreate(core->hle3d);
+#endif
+
+#if (defined(BUILD_GLES2) || defined(BUILD_GLES3)) && defined(USE_HLE3D)
+	gbacore->glRenderer.hle3d = core->hle3d;
+	HLE3DSetRenderScale(core->hle3d, gbacore->glRenderer.scale);
 #endif
 
 #ifndef DISABLE_THREADING
@@ -224,6 +240,11 @@ static void _GBACoreDeinit(struct mCore* core) {
 	if (core->symbolTable) {
 		mDebuggerSymbolTableDestroy(core->symbolTable);
 	}
+#endif
+
+#ifdef USE_HLE3D
+	HLE3DDestroy(core->hle3d);
+	free(core->hle3d);
 #endif
 
 	struct GBACore* gbacore = (struct GBACore*) core;
@@ -489,6 +510,11 @@ static bool _GBACoreLoadROM(struct mCore* core, struct VFile* vf) {
 		return success;
 	}
 #endif
+#ifdef USE_HLE3D
+	if (core->hle3d) {
+		HLE3DOnLoadROM(core->hle3d, vf);
+	}
+#endif
 	if (GBAIsMB(vf)) {
 		return GBALoadMB(core->board, vf);
 	}
@@ -535,6 +561,11 @@ static void _GBACoreUnloadROM(struct mCore* core) {
 		mCheatDeviceDestroy(gbacore->cheatDevice);
 		gbacore->cheatDevice = NULL;
 	}
+#ifdef USE_HLE3D
+	if (core->hle3d) {
+		HLE3DOnUnloadROM(core->hle3d);
+	}
+#endif
 	return GBAUnloadROM(core->board);
 }
 

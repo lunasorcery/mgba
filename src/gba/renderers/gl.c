@@ -12,6 +12,9 @@
 #include <mgba/internal/gba/io.h>
 #include <mgba/internal/gba/renderers/cache-set.h>
 #include <mgba-util/memory.h>
+#ifdef USE_HLE3D
+#include <mgba/hle3d/hle3d.h>
+#endif
 
 static void GBAVideoGLRendererInit(struct GBAVideoRenderer* renderer);
 static void GBAVideoGLRendererDeinit(struct GBAVideoRenderer* renderer);
@@ -677,6 +680,10 @@ void GBAVideoGLRendererCreate(struct GBAVideoGLRenderer* renderer) {
 	renderer->d.highlightAmount = 0;
 
 	renderer->scale = 1;
+
+#ifdef USE_HLE3D
+	renderer->hle3d = NULL;
+#endif
 }
 
 static void _compileShader(struct GBAVideoGLRenderer* glRenderer, struct GBAVideoGLShader* shader, const char** shaderBuffer, int shaderBufferLines, GLuint vs, const struct GBAVideoGLUniform* uniforms, const char* const* outFrags, char* log) {
@@ -1833,6 +1840,25 @@ void GBAVideoGLRendererDrawBackgroundMode4(struct GBAVideoGLRenderer* renderer, 
 	glUniform2i(uniforms[GBA_GL_BG_SIZE], GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
 	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 	glDrawBuffers(1, (GLenum[]) { GL_COLOR_ATTACHMENT0 });
+	if (renderer->hle3d && renderer->hle3d->activeBackend) {
+		uint8_t* hdBuffer = renderer->hle3d->backgroundMode4[GBARegisterDISPCNTIsFrameSelect(renderer->dispcnt)?1:0];
+		glClearColor(1,1,1,1);
+		int const stride = GBA_VIDEO_HORIZONTAL_PIXELS * renderer->scale;
+		for (int py = renderer->firstY*renderer->scale; py <= y * renderer->scale; ++py)
+		{
+			for (int px = 0; px < GBA_VIDEO_HORIZONTAL_PIXELS * renderer->scale; ++px)
+			{
+				uint8_t const index = hdBuffer[py*stride+px];
+				if (index != 0)
+				{
+					glScissor(px-2,py,5,1);
+					glClear(GL_COLOR_BUFFER_BIT);
+					glScissor(px,py-2,1,5);
+					glClear(GL_COLOR_BUFFER_BIT);
+				}
+			}
+		}
+	}
 }
 
 void GBAVideoGLRendererDrawBackgroundMode5(struct GBAVideoGLRenderer* renderer, struct GBAVideoGLBackground* background, int y) {
@@ -1869,6 +1895,9 @@ void GBAVideoGLRendererDrawWindow(struct GBAVideoGLRenderer* renderer, int y) {
 }
 
 void GBAVideoGLRendererSetScale(struct GBAVideoGLRenderer* renderer, int scale) {
+#ifdef USE_HLE3D
+	HLE3DSetRenderScale(renderer->hle3d, scale);
+#endif
 	if (scale == renderer->scale) {
 		return;
 	}

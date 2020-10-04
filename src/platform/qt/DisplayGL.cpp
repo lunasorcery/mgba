@@ -145,7 +145,7 @@ void DisplayGL::pauseDrawing() {
 		m_isDrawing = false;
 		CoreController::Interrupter interrupter(m_context);
 		QMetaObject::invokeMethod(m_painter, "pause", Qt::BlockingQueuedConnection);
-		setUpdatesEnabled(true);
+		//setUpdatesEnabled(true);
 	}
 }
 
@@ -154,7 +154,7 @@ void DisplayGL::unpauseDrawing() {
 		m_isDrawing = true;
 		CoreController::Interrupter interrupter(m_context);
 		QMetaObject::invokeMethod(m_painter, "unpause", Qt::BlockingQueuedConnection);
-		setUpdatesEnabled(false);
+		//setUpdatesEnabled(false);
 	}
 }
 

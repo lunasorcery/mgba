@@ -11,6 +11,10 @@
 #include <mgba-util/patch.h>
 #include <mgba-util/vfs.h>
 
+#ifdef USE_HLE3D
+#include <mgba/hle3d/hle3d.h>
+#endif
+
 #include <signal.h>
 
 #ifndef DISABLE_THREADING
@@ -197,15 +201,28 @@ static THREAD_ENTRY _mCoreThreadRun(void* context) {
 
 	struct mCoreThreadInternal* impl = threadContext->impl;
 	while (impl->state < THREAD_EXITING) {
+		bool didStep = false;
 #ifdef USE_DEBUGGERS
 		struct mDebugger* debugger = core->debugger;
 		if (debugger) {
 			mDebuggerRun(debugger);
+			didStep = true;
 			if (debugger->state == DEBUGGER_SHUTDOWN) {
 				_changeState(impl, THREAD_EXITING, false);
 			}
-		} else
+		}
 #endif
+#ifdef USE_HLE3D
+		struct HLE3D* hle3d = core->hle3d;
+		if (hle3d && hle3d->breakpoints) {
+			if (!didStep) {
+				core->step(core);
+				didStep = true;
+			}
+			HLE3DCheckBreakpoints(hle3d, core->cpu);
+		}
+#endif
+		if (!didStep)
 		{
 			while (impl->state <= THREAD_MAX_RUNNING) {
 				core->runLoop(core);

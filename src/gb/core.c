@@ -993,6 +993,9 @@ struct mCore* GBCoreCreate(void) {
 	core->board = NULL;
 	core->debugger = NULL;
 	core->symbolTable = NULL;
+#ifdef USE_HLE3D
+	core->hle3d = NULL;
+#endif
 	core->init = _GBCoreInit;
 	core->deinit = _GBCoreDeinit;
 	core->platform = _GBCorePlatform;
