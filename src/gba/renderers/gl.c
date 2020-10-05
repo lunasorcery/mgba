@@ -1829,9 +1829,9 @@ void GBAVideoGLRendererDrawBackgroundMode3(struct GBAVideoGLRenderer* renderer, 
 }
 
 void GBAVideoGLRendererDrawBackgroundMode4(struct GBAVideoGLRenderer* renderer, struct GBAVideoGLBackground* background, int y) {
-	if (renderer->hle3d && renderer->hle3d->activeBackend) {
+	if (renderer->hle3d && renderer->hle3d->bgMode4active) {
 		if (renderer->firstY == 0) {
-			uint8_t* hdBuffer = renderer->hle3d->backgroundMode4color[GBARegisterDISPCNTIsFrameSelect(renderer->dispcnt)?1:0];
+			uint8_t* hdBuffer = renderer->hle3d->bgMode4color[GBARegisterDISPCNTIsFrameSelect(renderer->dispcnt)?1:0];
 			glBindTexture(GL_TEXTURE_2D, background->tex);
 			glTexSubImage2D(
 				GL_TEXTURE_2D, // target

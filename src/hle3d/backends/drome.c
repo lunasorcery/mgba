@@ -73,20 +73,15 @@ void HLE3DBackendDromeInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, ui
 		//dromeBackend->addrRomJumpToRasterize   = 0x088f3b64;
 	}
 
+	dromeBackend->spriteStackHeight = 0;
+	memset(dromeBackend->spriteStack, 0, sizeof(dromeBackend->spriteStack));
+
 	HLE3DAddBreakpoint(hle3d, dromeBackend->addrRamExecutionPoint);
 }
 
 void HLE3DBackendDromeDeinit(struct HLE3DBackend* backend)
 {
 	UNUSED(backend);
-
-	//struct HLE3DBackendDrome* dromeBackend = (struct HLE3DBackendDrome*)backend;
-
-	//int const scale = dromeBackend->b.h->renderScale;
-
-	//FILE* fh = fopen("/Users/will/drome-screen.bin", "wb");
-	//fwrite(dromeBackend->b.h->backgroundMode4[0], 1, 240*160*scale*scale, fh);
-	//fclose(fh);
 }
 
 bool HLE3DBackendDromeIsGame(uint32_t ident)
@@ -189,20 +184,20 @@ void HLE3DBackendDromeHookRasterizer(struct HLE3DBackendDrome* backend, struct A
 	//printf("renderStreamPtr: %08x\n", renderStreamPtr);
 	uint32_t const drawBuffer = cpu->memory.load32(cpu, r0+60, NULL);
 	//printf("drawBuffer: %08x\n", drawBuffer);
-	uint32_t const renderFlags = cpu->memory.load32(cpu, r0+68, NULL);
-	printf("renderFlags: %08x\n", renderFlags);
-	uint32_t const background = cpu->memory.load32(cpu, r0+80, NULL);
-	printf("background: %08x\n", background);
 
 	int const scale = backend->b.h->renderScale;
 	int const activeFrameIndex = (drawBuffer == 0x06000000) ? 0 : 1;
-	uint8_t* renderTargetPal = backend->b.h->backgroundMode4pal[activeFrameIndex];
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[activeFrameIndex];
 	memset(renderTargetPal, 0, 240*160*scale*scale);
 
 	uint32_t numTrianglesTotal = 0;
 	uint32_t numTriangles[8] = {0};
 	uint32_t activeTriPtr = renderStreamPtr;
 	uint8_t activeTriType = cpu->memory.load8(cpu, activeTriPtr, NULL);
+
+	// kinda yucky hack for the textured background on the pause menu
+	backend->b.h->bgMode4active = (activeTriType != 0);
+
 	while (activeTriType != 0) {
 		if (activeTriType > 7) {
 			printf("bad tri type %d\n", activeTriType);
@@ -249,7 +244,33 @@ void HLE3DBackendDromeHookRasterizer(struct HLE3DBackendDrome* backend, struct A
 		cpu->memory.store8(cpu, renderStreamPtr, 0, NULL);
 	}
 
-	uint8_t* renderTargetColor = backend->b.h->backgroundMode4color[activeFrameIndex];
+
+	// finish up the sprite occlusion checks
+	while (backend->spriteStackHeight > 0) {
+		uint8_t const spriteIndex = backend->spriteStack[--backend->spriteStackHeight];
+
+		uint32_t const ptrSpriteParamsTable = r0+96;
+		uint32_t const ptrSpriteParams = ptrSpriteParamsTable + spriteIndex*8;
+
+		int16_t const spriteX = cpu->memory.load16(cpu, ptrSpriteParams+2, NULL);
+		int16_t const spriteY = cpu->memory.load16(cpu, ptrSpriteParams+4, NULL);
+
+		int const scale = backend->b.h->renderScale;
+		int const stride = 240*scale;
+		int const x = (spriteX*scale);
+		int const y = (spriteY*scale);
+
+		uint8_t const pixel = renderTargetPal[y*stride+x];
+		if (pixel == 0) {
+			uint8_t const originalPixel = cpu->memory.load16(cpu, ptrSpriteParams+6, NULL);
+			renderTargetPal[y*stride+x] = originalPixel;
+			cpu->memory.store16(cpu, ptrSpriteParams+6, 2, NULL);
+		} else {
+			cpu->memory.store16(cpu, ptrSpriteParams+6, 0, NULL);
+		}
+	}
+
+	uint8_t* renderTargetColor = backend->b.h->bgMode4color[activeFrameIndex];
 	memset(renderTargetColor, 0, 240*160*scale*scale*4);
 	uint8_t palette[256*3];
 	for (int i = 0; i < 256; ++i) {
@@ -432,9 +453,6 @@ void HLE3DBackendDromeRasterizeAffineTexTri(struct HLE3DBackendDrome* backend, s
 
 void HLE3DBackendDromeRasterizeSpriteOccluder(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint32_t activeTriPtr, uint8_t* renderTarget)
 {
-	UNUSED(backend);
-	UNUSED(renderTarget);
-
 	uint8_t const spriteIndex = cpu->memory.load8(cpu, activeTriPtr+8, NULL);
 
 	uint32_t const r0 = cpu->gprs[0];
@@ -455,14 +473,24 @@ void HLE3DBackendDromeRasterizeSpriteOccluder(struct HLE3DBackendDrome* backend,
 	int16_t const spriteX = cpu->memory.load16(cpu, ptrSpriteParams+2, NULL);
 	int16_t const spriteY = cpu->memory.load16(cpu, ptrSpriteParams+4, NULL);
 
-	//printf("sprite occluder - sprite %02x, (%d,%d)\n", spriteIndex, spriteX, spriteY);
+	if (spriteX >= clipLeft / 8 &&
+		spriteX <  clipRight / 8 &&
+		spriteY >= clipTop / 8 &&
+		spriteY <  clipBottom / 8)
+	{
+		int const scale = backend->b.h->renderScale;
+		int const stride = 240*scale;
+		int const x = (spriteX*scale);
+		int const y = (spriteY*scale);
 
-	cpu->memory.store16(cpu, ptrSpriteParams+6, 2, NULL);
+		uint8_t const pixel = renderTarget[y*stride+x];
+		cpu->memory.store16(cpu, ptrSpriteParams+6, pixel, NULL);
+		renderTarget[y*stride+x] = 0;
 
-	UNUSED(spriteX);
-	UNUSED(spriteY);
-	UNUSED(clipLeft);
-	UNUSED(clipTop);
-	UNUSED(clipRight);
-	UNUSED(clipBottom);
+		backend->spriteStack[backend->spriteStackHeight++] = spriteIndex;
+	}
+	else
+	{
+		cpu->memory.store16(cpu, ptrSpriteParams+6, 1, NULL);
+	}
 }

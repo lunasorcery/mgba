@@ -26,6 +26,9 @@ struct HLE3DBackendDrome {
 	// where are the thumb-mode jumps to ram?
 	//uint32_t addrRomJumpToTransform;
 	//uint32_t addrRomJumpToRasterize;
+
+	int spriteStackHeight;
+	uint8_t spriteStack[32];
 };
 
 void HLE3DBackendDromeCreate(struct HLE3DBackendDrome* backend);

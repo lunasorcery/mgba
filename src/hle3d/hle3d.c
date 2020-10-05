@@ -14,9 +14,11 @@ void HLE3DCreate(struct HLE3D* hle3d)
 	HLE3DBackendDromeCreate(&hle3d->backendDromeRacers);
 
 	hle3d->renderScale = 0;
+
+	hle3d->bgMode4active = false;
 	for(int i=0;i<2;++i) {
-		hle3d->backgroundMode4pal[i] = NULL;
-		hle3d->backgroundMode4color[i] = NULL;
+		hle3d->bgMode4pal[i] = NULL;
+		hle3d->bgMode4color[i] = NULL;
 	}
 }
 
@@ -26,8 +28,8 @@ void HLE3DDestroy(struct HLE3D* hle3d)
 	HLE3DOnUnloadROM(hle3d);
 	HLE3DClearBreakpoints(hle3d);
 	for(int i=0;i<2;++i) {
-		free(hle3d->backgroundMode4pal[i]);
-		free(hle3d->backgroundMode4color[i]);
+		free(hle3d->bgMode4pal[i]);
+		free(hle3d->bgMode4color[i]);
 	}
 }
 
@@ -38,12 +40,12 @@ void HLE3DSetRenderScale(struct HLE3D* hle3d, int scale)
 
 	hle3d->renderScale = scale;
 	for(int i=0;i<2;++i) {
-		free(hle3d->backgroundMode4pal[i]);
-		free(hle3d->backgroundMode4color[i]);
+		free(hle3d->bgMode4pal[i]);
+		free(hle3d->bgMode4color[i]);
 	}
 	for(int i=0;i<2;++i) {
-		hle3d->backgroundMode4pal[i] = malloc(240*160*scale*scale);
-		hle3d->backgroundMode4color[i] = malloc(240*160*scale*scale*4);
+		hle3d->bgMode4pal[i] = malloc(240*160*scale*scale);
+		hle3d->bgMode4color[i] = malloc(240*160*scale*scale*4);
 	}
 }
 
@@ -89,6 +91,8 @@ void HLE3DOnUnloadROM(struct HLE3D* hle3d)
 	lunaprintf("HLE3DOnUnloadROM\n");
 
 	HLE3DClearBreakpoints(hle3d);
+
+	hle3d->bgMode4active = false;
 
 	if (hle3d->activeBackend) {
 		hle3d->activeBackend->deinit(hle3d->activeBackend);

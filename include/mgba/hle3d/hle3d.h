@@ -18,8 +18,10 @@ struct HLE3D {
 	struct HLE3DBackendDrome backendDromeRacers;
 
 	int renderScale;
-	uint8_t* backgroundMode4pal[2];
-	uint8_t* backgroundMode4color[2];
+
+	bool bgMode4active;
+	uint8_t* bgMode4pal[2];
+	uint8_t* bgMode4color[2];
 };
 
 void HLE3DCreate(struct HLE3D* hle3d);
