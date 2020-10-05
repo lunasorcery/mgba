@@ -17,6 +17,8 @@ static const uint32_t
 	kIdentHotWheelsStuntTrack = 0x45454842, // BHEE
 	kIdentHotWheels2Pack      = 0x454a5142; // BQJE
 
+static const int DELTASCALE = 1024;//256;
+
 void HLE3DBackendDromeCreate(struct HLE3DBackendDrome* backend)
 {
 	backend->b.init   = HLE3DBackendDromeInit;
@@ -33,7 +35,7 @@ void HLE3DBackendDromeInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, ui
 	dromeBackend->shouldHookRasterize = true;
 
 	dromeBackend->disableRealTransform = false;
-	dromeBackend->disableRealRasterizer = false;//true;
+	dromeBackend->disableRealRasterizer = true;
 
 	if (ident == kIdentDromeEU || ident == kIdentDromeNA)
 	{
@@ -76,13 +78,15 @@ void HLE3DBackendDromeInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, ui
 
 void HLE3DBackendDromeDeinit(struct HLE3DBackend* backend)
 {
-	struct HLE3DBackendDrome* dromeBackend = (struct HLE3DBackendDrome*)backend;
+	UNUSED(backend);
 
-	int const scale = dromeBackend->b.h->renderScale;
+	//struct HLE3DBackendDrome* dromeBackend = (struct HLE3DBackendDrome*)backend;
 
-	FILE* fh = fopen("/Users/will/drome-screen.bin", "wb");
-	fwrite(dromeBackend->b.h->backgroundMode4[0], 1, 240*160*scale*scale, fh);
-	fclose(fh);
+	//int const scale = dromeBackend->b.h->renderScale;
+
+	//FILE* fh = fopen("/Users/will/drome-screen.bin", "wb");
+	//fwrite(dromeBackend->b.h->backgroundMode4[0], 1, 240*160*scale*scale, fh);
+	//fclose(fh);
 }
 
 bool HLE3DBackendDromeIsGame(uint32_t ident)
@@ -133,6 +137,10 @@ void HLE3DBackendDromeHookTransform(struct HLE3DBackendDrome* backend, struct AR
 	//	camMtx00/4096.0f, camMtx10/4096.0f, camMtx20/4096.0f,
 	//	camMtx01/4096.0f, camMtx11/4096.0f, camMtx21/4096.0f,
 	//	camMtx02/4096.0f, camMtx12/4096.0f, camMtx22/4096.0f);
+	UNUSED(camMtx00); UNUSED(camMtx10); UNUSED(camMtx20);
+	UNUSED(camMtx01); UNUSED(camMtx11); UNUSED(camMtx21);
+	UNUSED(camMtx02); UNUSED(camMtx12); UNUSED(camMtx22);
+
 	int32_t const camPosX = cpu->memory.load32(cpu, r0+20, NULL);
 	int32_t const camPosY = cpu->memory.load32(cpu, r0+24, NULL);
 	int32_t const camPosZ = cpu->memory.load32(cpu, r0+28, NULL);
@@ -141,6 +149,10 @@ void HLE3DBackendDromeHookTransform(struct HLE3DBackendDrome* backend, struct AR
 	//	camPosX/4096.0f,
 	//	camPosY/4096.0f,
 	//	camPosZ/4096.0f);
+	UNUSED(camPosX);
+	UNUSED(camPosY);
+	UNUSED(camPosZ);
+
 
 	uint32_t numObjects = 0;
 	uint32_t activeObjectPtr = objectsPtr;
@@ -177,10 +189,15 @@ void HLE3DBackendDromeHookRasterizer(struct HLE3DBackendDrome* backend, struct A
 	//printf("renderStreamPtr: %08x\n", renderStreamPtr);
 	uint32_t const drawBuffer = cpu->memory.load32(cpu, r0+60, NULL);
 	//printf("drawBuffer: %08x\n", drawBuffer);
+	uint32_t const renderFlags = cpu->memory.load32(cpu, r0+68, NULL);
+	printf("renderFlags: %08x\n", renderFlags);
+	uint32_t const background = cpu->memory.load32(cpu, r0+80, NULL);
+	printf("background: %08x\n", background);
 
 	int const scale = backend->b.h->renderScale;
-	uint8_t* renderTarget = backend->b.h->backgroundMode4[(drawBuffer == 0x06000000) ? 0 : 1];
-	memset(renderTarget, 0, 240*160*scale*scale);
+	int const activeFrameIndex = (drawBuffer == 0x06000000) ? 0 : 1;
+	uint8_t* renderTargetPal = backend->b.h->backgroundMode4pal[activeFrameIndex];
+	memset(renderTargetPal, 0, 240*160*scale*scale);
 
 	uint32_t numTrianglesTotal = 0;
 	uint32_t numTriangles[8] = {0};
@@ -198,18 +215,18 @@ void HLE3DBackendDromeHookRasterizer(struct HLE3DBackendDrome* backend, struct A
 		{
 			case 1:
 			case 4:
-				HLE3DBackendDromeRasterizeFlatTri(backend, cpu, activeTriPtr, renderTarget);
+				HLE3DBackendDromeRasterizeFlatTri(backend, cpu, activeTriPtr, renderTargetPal);
 				break;
 			case 2:
 			case 5:
-				HLE3DBackendDromeRasterizeStaticTexTri(backend, cpu, activeTriPtr, renderTarget);
+				HLE3DBackendDromeRasterizeStaticTexTri(backend, cpu, activeTriPtr, renderTargetPal);
 				break;
 			case 3:
 			case 6:
-				HLE3DBackendDromeRasterizeAffineTexTri(backend, cpu, activeTriPtr, renderTarget);
+				HLE3DBackendDromeRasterizeAffineTexTri(backend, cpu, activeTriPtr, renderTargetPal);
 				break;
 			case 7:
-				HLE3DBackendDromeRasterizeSpriteOccluder(backend, cpu, activeTriPtr, renderTarget);
+				HLE3DBackendDromeRasterizeSpriteOccluder(backend, cpu, activeTriPtr, renderTargetPal);
 				break;
 		}
 
@@ -231,69 +248,156 @@ void HLE3DBackendDromeHookRasterizer(struct HLE3DBackendDrome* backend, struct A
 		// by making the first primitive the "end" primitive
 		cpu->memory.store8(cpu, renderStreamPtr, 0, NULL);
 	}
+
+	uint8_t* renderTargetColor = backend->b.h->backgroundMode4color[activeFrameIndex];
+	memset(renderTargetColor, 0, 240*160*scale*scale*4);
+	uint8_t palette[256*3];
+	for (int i = 0; i < 256; ++i) {
+		uint16_t const color555 = cpu->memory.load16(cpu, 0x05000000+i*2, NULL);
+		uint32_t const color888 = mColorFrom555(color555);
+		uint8_t const r = (color888 & 0xff);
+		uint8_t const g = ((color888 >> 8) & 0xff);
+		uint8_t const b = ((color888 >> 16) & 0xff);
+		palette[i*3+0] = r;
+		palette[i*3+1] = g;
+		palette[i*3+2] = b;
+	}
+	for (int i = 0; i < 240*160*scale*scale; ++i) {
+		uint8_t const index = renderTargetPal[i];
+		if (index != 0) {
+			renderTargetColor[i*4+0] = palette[index*3+0];
+			renderTargetColor[i*4+1] = palette[index*3+1];
+			renderTargetColor[i*4+2] = palette[index*3+2];
+			renderTargetColor[i*4+3] = 0xff;
+		}
+	}
+}
+
+static void FillFlatTrapezoid(int top, int bottom, int left, int right, int dleft, int dright, uint8_t color, int scale, uint8_t* renderTarget)
+{
+	// try to fix cracks
+	//right += DELTASCALE*4;
+
+	int const stride = 240*scale;
+	int t = (top*scale)/8;
+	int b = (bottom*scale)/8;
+	//if (t<0) t=0;
+	//if (b>=160*scale) b=160*scale-1;
+	if (t < 160*scale && b>=0) {
+		for(int y=t;y<b;++y) {
+			if (y>=0 && y<160*scale) {
+				int l = ((left/DELTASCALE)*scale)/8;
+				int r = ((right/DELTASCALE)*scale)/8;
+				if (l<0) l=0;
+				if (r>=240*scale) r=240*scale-1;
+
+				if (l < 240*scale && r >= 0 && l <= r) {
+					//for (int x=l;x<=r;++x) {
+					//	if (x>=0 && x<240*scale) {
+					//		renderTarget[y*stride+x] = color;
+					//	}
+					//}
+					memset(renderTarget+y*stride+l, color, r+1-l);
+				}
+			}
+			left += (dleft*8)/scale;
+			right += (dright*8)/scale;
+		}
+	}
 }
 
 void HLE3DBackendDromeRasterizeFlatTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint32_t activeTriPtr, uint8_t* renderTarget)
 {
-	uint8_t const triType = cpu->memory.load8(cpu, activeTriPtr+0, NULL);
-	uint8_t const clipFlags = cpu->memory.load8(cpu, activeTriPtr+1, NULL);
+	//uint8_t const triType = cpu->memory.load8(cpu, activeTriPtr+0, NULL);
+
 	uint8_t const colorIndex = cpu->memory.load8(cpu, activeTriPtr+11, NULL);
-	int16_t const x0 = cpu->memory.load16(cpu, activeTriPtr+12, NULL);
-	int16_t const y0 = cpu->memory.load16(cpu, activeTriPtr+14, NULL);
-	int16_t const x1 = cpu->memory.load16(cpu, activeTriPtr+16, NULL);
-	int16_t const y1 = cpu->memory.load16(cpu, activeTriPtr+18, NULL);
-	int16_t const x2 = cpu->memory.load16(cpu, activeTriPtr+20, NULL);
-	int16_t const y2 = cpu->memory.load16(cpu, activeTriPtr+22, NULL);
 
-	int const scale = backend->b.h->renderScale;
+	int32_t yx0 = cpu->memory.load32(cpu, activeTriPtr+12, NULL);
+	int32_t yx1 = cpu->memory.load32(cpu, activeTriPtr+16, NULL);
+	int32_t yx2 = cpu->memory.load32(cpu, activeTriPtr+20, NULL);
 
-	if (triType == 1)
-	{
-		int const stride = 240*scale;
-
-		int const ix0 = x0, iy0 = y0;
-		int const ix1 = x1, iy1 = y1;
-		int const ix2 = x2, iy2 = y2;
-
-		renderTarget[((iy0*scale)/8)*stride+((ix0*scale)/8)] = colorIndex;
-		renderTarget[((iy1*scale)/8)*stride+((ix1*scale)/8)] = colorIndex;
-		renderTarget[((iy2*scale)/8)*stride+((ix2*scale)/8)] = colorIndex;
-
-		//for (int i=1;i<16;++i) {
-		//	int x = ((ix0*i)+(ix1*(16-i)))/16;
-		//	int y = ((iy0*i)+(iy1*(16-i)))/16;
-		//	renderTarget[((y*scale)/8)*stride+((x*scale)/8)] = colorIndex;
-		//}
-		//for (int i=1;i<16;++i) {
-		//	int x = ((ix1*i)+(ix2*(16-i)))/16;
-		//	int y = ((iy1*i)+(iy2*(16-i)))/16;
-		//	renderTarget[((y*scale)/8)*stride+((x*scale)/8)] = colorIndex;
-		//}
-		//for (int i=1;i<16;++i) {
-		//	int x = ((ix0*i)+(ix2*(16-i)))/16;
-		//	int y = ((iy0*i)+(iy2*(16-i)))/16;
-		//	renderTarget[((y*scale)/8)*stride+((x*scale)/8)] = colorIndex;
-		//}
+	// sort verts
+	if (yx0 > yx1) {
+		yx0 ^= yx1;
+		yx1 ^= yx0;
+		yx0 ^= yx1;
+	}
+	if (yx0 > yx2) {
+		yx0 ^= yx2;
+		yx2 ^= yx0;
+		yx0 ^= yx2;
+	}
+	if (yx1 > yx2) {
+		yx2 ^= yx1;
+		yx1 ^= yx2;
+		yx2 ^= yx1;
 	}
 
-	//printf(
-	//	"flat tri - type %02x, clip %02x, color %02x, (%d,%d) (%d,%d) (%d,%d)\n",
-	//	triType,
-	//	clipFlags,
-	//	colorIndex,
-	//	x0/8, y0/8,
-	//	x1/8, y1/8,
-	//	x2/8, y2/8);
+	int/*16_t*/ const Ay = (int16_t)(yx0>>16);
+	int/*16_t*/ const By = (int16_t)(yx1>>16);
+	int/*16_t*/ const Cy = (int16_t)(yx2>>16);
+	int/*16_t*/ const Ax = (int16_t)(yx0 & 0xffff);
+	int/*16_t*/ const Bx = (int16_t)(yx1 & 0xffff);
+	int/*16_t*/ const Cx = (int16_t)(yx2 & 0xffff);
+
+	int const scale = backend->b.h->renderScale;
+	int const dAB = ((Bx-Ax)*DELTASCALE)/((By-Ay)?(By-Ay):1);
+	int const dBC = ((Cx-Bx)*DELTASCALE)/((Cy-By)?(Cy-By):1);
+	int const dAC = ((Cx-Ax)*DELTASCALE)/((Cy-Ay)?(Cy-Ay):1);
+
+	if (Ay == By)
+	{
+		if (dAC > dBC)
+			FillFlatTrapezoid(Ay,Cy,Ax*DELTASCALE,Bx*DELTASCALE,dAC,dBC,colorIndex,scale,renderTarget);
+		else
+			FillFlatTrapezoid(Ay,Cy,Bx*DELTASCALE,Ax*DELTASCALE,dBC,dAC,colorIndex,scale,renderTarget);
+	}
+	else if (By == Cy)
+	{
+		if (dAB < dAC)
+			FillFlatTrapezoid(Ay,By,Ax*DELTASCALE,Ax*DELTASCALE,dAB,dAC,colorIndex,scale,renderTarget);
+		else
+			FillFlatTrapezoid(Ay,By,Ax*DELTASCALE,Ax*DELTASCALE,dAC,dAB,colorIndex,scale,renderTarget);
+	}
+	else
+	{
+		if (dAB <= dAC) {
+			// B on left
+			if (dBC >= dAC) {
+				FillFlatTrapezoid(Ay,By,Ax*DELTASCALE,Ax*DELTASCALE,dAB,dAC,colorIndex,scale,renderTarget);
+				FillFlatTrapezoid(By,Cy,Bx*DELTASCALE,Ax*DELTASCALE+dAC*(By-Ay),dBC,dAC,colorIndex,scale,renderTarget);
+			} else {
+				printf("????\n");
+				printf("(%d,%d) (%d,%d) (%d,%d)\n", Ax,Ay, Bx,By, Cx,Cy);
+				printf("dAB:%d, dAC:%d, dBC:%d\n", dAB, dAC, dBC);
+			}
+		} else {
+			// B on right
+			if (dAC >= dBC) {
+				FillFlatTrapezoid(Ay,By,Ax*DELTASCALE,Ax*DELTASCALE,dAC,dAB,colorIndex,scale,renderTarget);
+				FillFlatTrapezoid(By,Cy,Ax*DELTASCALE+dAC*(By-Ay),Bx*DELTASCALE,dAC,dBC,colorIndex,scale,renderTarget);
+			} else {
+				printf("!!!!\n");
+				printf("(%d,%d) (%d,%d) (%d,%d)\n", Ax,Ay, Bx,By, Cx,Cy);
+				printf("dAB:%d, dAC:%d, dBC:%d\n", dAB, dAC, dBC);
+			}
+		}
+	}
 }
 
 void HLE3DBackendDromeRasterizeStaticTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint32_t activeTriPtr, uint8_t* renderTarget)
 {
+	UNUSED(backend);
 	UNUSED(cpu);
 	UNUSED(activeTriPtr);
+	UNUSED(renderTarget);
 }
 
 void HLE3DBackendDromeRasterizeAffineTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint32_t activeTriPtr, uint8_t* renderTarget)
 {
+	UNUSED(backend);
+	UNUSED(renderTarget);
+
 	uint8_t const triType = cpu->memory.load8(cpu, activeTriPtr+0, NULL);
 	uint8_t const clipFlags = cpu->memory.load8(cpu, activeTriPtr+1, NULL);
 	uint8_t const texIndex = cpu->memory.load8(cpu, activeTriPtr+11, NULL);
@@ -328,6 +432,9 @@ void HLE3DBackendDromeRasterizeAffineTexTri(struct HLE3DBackendDrome* backend, s
 
 void HLE3DBackendDromeRasterizeSpriteOccluder(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint32_t activeTriPtr, uint8_t* renderTarget)
 {
+	UNUSED(backend);
+	UNUSED(renderTarget);
+
 	uint8_t const spriteIndex = cpu->memory.load8(cpu, activeTriPtr+8, NULL);
 
 	uint32_t const r0 = cpu->gprs[0];

@@ -1829,6 +1829,24 @@ void GBAVideoGLRendererDrawBackgroundMode3(struct GBAVideoGLRenderer* renderer, 
 }
 
 void GBAVideoGLRendererDrawBackgroundMode4(struct GBAVideoGLRenderer* renderer, struct GBAVideoGLBackground* background, int y) {
+	if (renderer->hle3d && renderer->hle3d->activeBackend) {
+		if (renderer->firstY == 0) {
+			uint8_t* hdBuffer = renderer->hle3d->backgroundMode4color[GBARegisterDISPCNTIsFrameSelect(renderer->dispcnt)?1:0];
+			glBindTexture(GL_TEXTURE_2D, background->tex);
+			glTexSubImage2D(
+				GL_TEXTURE_2D, // target
+				0, // level
+				0, // xoffset
+				0, // yoffset
+				GBA_VIDEO_HORIZONTAL_PIXELS * renderer->scale, // width
+				GBA_VIDEO_VERTICAL_PIXELS * renderer->scale, // height
+				GL_RGBA, // format
+				GL_UNSIGNED_BYTE, //type
+				hdBuffer); // pixels
+		}
+		return;
+	}
+
 	const struct GBAVideoGLShader* shader = &renderer->bgShader[4];
 	const GLuint* uniforms = shader->uniforms;
 	glBindFramebuffer(GL_FRAMEBUFFER, background->fbo);
@@ -1840,25 +1858,6 @@ void GBAVideoGLRendererDrawBackgroundMode4(struct GBAVideoGLRenderer* renderer, 
 	glUniform2i(uniforms[GBA_GL_BG_SIZE], GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS);
 	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 	glDrawBuffers(1, (GLenum[]) { GL_COLOR_ATTACHMENT0 });
-	if (renderer->hle3d && renderer->hle3d->activeBackend) {
-		uint8_t* hdBuffer = renderer->hle3d->backgroundMode4[GBARegisterDISPCNTIsFrameSelect(renderer->dispcnt)?1:0];
-		glClearColor(1,1,1,1);
-		int const stride = GBA_VIDEO_HORIZONTAL_PIXELS * renderer->scale;
-		for (int py = renderer->firstY*renderer->scale; py <= y * renderer->scale; ++py)
-		{
-			for (int px = 0; px < GBA_VIDEO_HORIZONTAL_PIXELS * renderer->scale; ++px)
-			{
-				uint8_t const index = hdBuffer[py*stride+px];
-				if (index != 0)
-				{
-					glScissor(px-2,py,5,1);
-					glClear(GL_COLOR_BUFFER_BIT);
-					glScissor(px,py-2,1,5);
-					glClear(GL_COLOR_BUFFER_BIT);
-				}
-			}
-		}
-	}
 }
 
 void GBAVideoGLRendererDrawBackgroundMode5(struct GBAVideoGLRenderer* renderer, struct GBAVideoGLBackground* background, int y) {
