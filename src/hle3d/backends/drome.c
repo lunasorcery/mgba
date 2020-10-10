@@ -17,16 +17,32 @@ static const uint32_t
 	kIdentHotWheelsStuntTrack = 0x45454842, // BHEE
 	kIdentHotWheels2Pack      = 0x454a5142; // BQJE
 
+struct RenderParams {
+	// passed in via r0
+	uint16_t viewportX;
+	uint16_t viewportY;
+	uint16_t viewportWidth;
+	uint16_t viewportHeight;
+	uint32_t baseTexPtr;
+	uint32_t ptrSpriteParamsTable;
+
+	// computed and stored on the stack
+	uint16_t clipLeft;
+	uint16_t clipTop;
+	uint16_t clipRight;
+	uint16_t clipBottom;
+};
+
 static void HLE3DBackendDromeHookTransform(struct HLE3DBackendDrome* backend, struct ARMCore* cpu);
 static void HLE3DBackendDromeHookRasterizer(struct HLE3DBackendDrome* backend, struct ARMCore* cpu);
-static void HLE3DBackendDromeRasterizeColoredTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr);
-static void HLE3DBackendDromeRasterizeStaticTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr);
-static void HLE3DBackendDromeRasterizeAffineTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr);
-static void HLE3DBackendDromeRasterizeColoredTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr);
-static void HLE3DBackendDromeRasterizeStaticTexTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr);
-static void HLE3DBackendDromeRasterizeAffineTexTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr);
-static void HLE3DBackendDromeRasterizeSpriteOccluder(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr);
-static void HLE3DBackendDromeFinalizeSpriteOccluders(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget);
+static void HLE3DBackendDromeRasterizeColoredTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr);
+static void HLE3DBackendDromeRasterizeStaticTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr);
+static void HLE3DBackendDromeRasterizeAffineTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr);
+static void HLE3DBackendDromeRasterizeColoredTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr);
+static void HLE3DBackendDromeRasterizeStaticTexTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr);
+static void HLE3DBackendDromeRasterizeAffineTexTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr);
+static void HLE3DBackendDromeRasterizeSpriteOccluder(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr);
+static void HLE3DBackendDromeFinalizeSpriteOccluders(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget);
 
 void HLE3DBackendDromeCreate(struct HLE3DBackendDrome* backend)
 {
@@ -176,6 +192,21 @@ static void HLE3DBackendDromeHookRasterizer(struct HLE3DBackendDrome* backend, s
 	// destination vram bank
 	uint32_t const drawBuffer = cpu->memory.load32(cpu, r0+60, NULL);
 
+	struct RenderParams params;
+	params.viewportX            = cpu->memory.load16(cpu, r0+32, NULL);
+	params.viewportY            = cpu->memory.load16(cpu, r0+34, NULL);
+	params.viewportWidth        = cpu->memory.load16(cpu, r0+36, NULL);
+	params.viewportHeight       = cpu->memory.load16(cpu, r0+38, NULL);
+	params.baseTexPtr           = cpu->memory.load32(cpu, r0+64, NULL);
+	params.ptrSpriteParamsTable = r0+96;
+
+	// deliberately *don't* increment by a half-pixel
+	// because it causes issues with screen-edge clipping at high resolutions
+	params.clipLeft   = (params.viewportX*8);//+4;
+	params.clipTop    = (params.viewportY*8);//+4;
+	params.clipRight  = params.clipLeft + (params.viewportWidth*8);
+	params.clipBottom = params.clipTop + (params.viewportHeight*8);
+
 	int const scale = backend->b.h->renderScale;
 	int const activeFrameIndex = (drawBuffer == 0x06000000) ? 0 : 1;
 	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[activeFrameIndex];
@@ -192,25 +223,25 @@ static void HLE3DBackendDromeHookRasterizer(struct HLE3DBackendDrome* backend, s
 		switch (activeTriType)
 		{
 			case 1:
-				HLE3DBackendDromeRasterizeColoredTri(backend, cpu, renderTargetPal, activeTriPtr);
+				HLE3DBackendDromeRasterizeColoredTri(backend, cpu, &params, renderTargetPal, activeTriPtr);
 				break;
 			case 2:
-				HLE3DBackendDromeRasterizeStaticTexTri(backend, cpu, renderTargetPal, activeTriPtr);
+				HLE3DBackendDromeRasterizeStaticTexTri(backend, cpu, &params, renderTargetPal, activeTriPtr);
 				break;
 			case 3:
-				HLE3DBackendDromeRasterizeAffineTexTri(backend, cpu, renderTargetPal, activeTriPtr);
+				HLE3DBackendDromeRasterizeAffineTexTri(backend, cpu, &params, renderTargetPal, activeTriPtr);
 				break;
 			case 4:
-				HLE3DBackendDromeRasterizeColoredTriClipped(backend, cpu, renderTargetPal, activeTriPtr);
+				HLE3DBackendDromeRasterizeColoredTriClipped(backend, cpu, &params, renderTargetPal, activeTriPtr);
 				break;
 			case 5:
-				HLE3DBackendDromeRasterizeStaticTexTriClipped(backend, cpu, renderTargetPal, activeTriPtr);
+				HLE3DBackendDromeRasterizeStaticTexTriClipped(backend, cpu, &params, renderTargetPal, activeTriPtr);
 				break;
 			case 6:
-				HLE3DBackendDromeRasterizeAffineTexTriClipped(backend, cpu, renderTargetPal, activeTriPtr);
+				HLE3DBackendDromeRasterizeAffineTexTriClipped(backend, cpu, &params, renderTargetPal, activeTriPtr);
 				break;
 			case 7:
-				HLE3DBackendDromeRasterizeSpriteOccluder(backend, cpu, renderTargetPal, activeTriPtr);
+				HLE3DBackendDromeRasterizeSpriteOccluder(backend, cpu, &params, renderTargetPal, activeTriPtr);
 				break;
 		}
 
@@ -225,7 +256,7 @@ static void HLE3DBackendDromeHookRasterizer(struct HLE3DBackendDrome* backend, s
 		cpu->memory.store8(cpu, renderStreamPtr, 0, NULL);
 	}
 
-	HLE3DBackendDromeFinalizeSpriteOccluders(backend, cpu, renderTargetPal);
+	HLE3DBackendDromeFinalizeSpriteOccluders(backend, cpu, &params, renderTargetPal);
 
 	uint8_t* renderTargetColor = backend->b.h->bgMode4color[activeFrameIndex];
 	memset(renderTargetColor, 0, 240*160*scale*scale*4);
@@ -318,8 +349,317 @@ static void FillAffineTexTrapezoid(
 	}
 }
 
-static void HLE3DBackendDromeRasterizeColoredTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr)
+static int32_t ClipEdgePolygon(
+	struct RenderParams const* params,
+	uint8_t clipFlags,
+	int32_t* vertBuffer)
 {
+	uint8_t const clipFlagRight  = 0x04;
+	uint8_t const clipFlagLeft   = 0x08;
+	uint8_t const clipFlagBottom = 0x10;
+	uint8_t const clipFlagTop    = 0x20;
+
+	int32_t scratchBuffer[64];
+	int32_t vertCount = 3;
+
+	int32_t* r11 = vertBuffer;
+	int32_t* r12 = scratchBuffer;
+
+	int32_t r4,r8,r9;
+
+	if ((clipFlags & clipFlagTop) != 0)
+	{
+		int32_t const r5 = params->clipTop;	// ldrh r5, [sp, #42]
+		int32_t const r6 = r5 << 16;		// mov r6, r5, lsl #16
+
+		int32_t* r1 = r11;		// mov r1, r11
+		int32_t* r2 = r12;		// mov r2, r12
+		vertCount--;			// sub r10, r10, #1
+		int32_t r3 = *r1++;		// ldr r3, [r1], #4
+
+		do {
+			r8 = r3 - r6;		// subs r8, r3, r6
+			if (r8 >= 0)
+			{
+				*r2++ = r3;		// strge r3, [r2], #4
+			}
+			r4 = *r1++;			// ldr r4, [r1], #4
+			r9 = r4 - r6;		// sub r9, r4, r6
+			r8 ^= r9;			// eors r8, r8, r9
+			if (r8 < 0)			// bpl
+			{
+				r8 = r4 >> 16;							// mov r8, r4, asr #16
+				r8 -= r3 >> 16;							// sub r8, r8, r3, asr #16 
+				r8 = DivTable(r8);						// ldr r8, [r14, r8, lsl #2]
+				r9 = r5 - (r3 >> 16);					// sub r9, r5, r3, asr #16
+				r9 = r8 * r9;							// mul r9, r8, r9
+				r8 = r3 << 16;							// mov r8, r3, lsl #16
+				r8 = (r4 << 16) - r8;					// rsb r8, r8, r4, lsl #16
+				r8 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r9, r8, r8, r9
+				r8 *= 4;								// mov r8, r8, lsl #2
+				r8 += r3 << 16;							// add r8, r8, r3, lsl #16
+				r8 = r6 | ((uint32_t)r8 >> 16);			// orr r8, r6, r8, lsr #16
+				*r2++ = r8;								// str r8, [r2], #4
+			}
+			r3 = r4;				// mov r3, r4
+			vertCount--;			// subs r10, r10, #1
+		} while(vertCount != 0);	// bne
+
+		r8 = r3 - r6;	// subs r8, r3, r6
+		if (r8 >= 0)
+		{
+			*r2++ = r3;	// strge r3, [r2], #4
+		}
+		r4 = *r11;		// ldr r4, [r11]
+		r9 = r4 - r6;	// sub r9, r4, r6
+		r8 ^= r9;		// eors r8, r8, r9
+		if (r8 < 0)		// bpl
+		{
+			r8 = r4 >> 16;							// mov r8, r4, asr #16
+			r8 -= r3 >> 16;							// sub r8, r8, r3, asr #16 
+			r8 = DivTable(r8);						// ldr r8, [r14, r8, lsl #2]
+			r9 = r5 - (r3 >> 16);					// sub r9, r5, r3, asr #16
+			r9 = r8 * r9;							// mul r9, r8, r9
+			r8 = r3 << 16;							// mov r8, r3, lsl #16
+			r8 = (r4 << 16) - r8;					// rsb r8, r8, r4, lsl #16
+			r8 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r9, r8, r8, r9
+			r8 *= 4;								// mov r8, r8, lsl #2
+			r8 += r3 << 16;							// add r8, r8, r3, lsl #16
+			r8 = r6 | ((uint32_t)r8 >> 16);			// orr r8, r6, r8, lsr #16
+			*r2++ = r8;								// str r8, [r2], #4
+		}
+
+		vertCount = r2 - r12;	// sub r10, r2, r12 ; mov r10, r10, asr #2
+
+		if (vertCount < 3)
+			return vertCount;
+
+		memcpy(vertBuffer, scratchBuffer, vertCount * sizeof(int32_t));
+	}
+
+	if ((clipFlags & clipFlagLeft) != 0)
+	{
+		int32_t const r5 = params->clipLeft;	// ldrh r5, [sp, #38]
+		int32_t const r6 = r5 << 16;			// mov r6, r5, lsl #16
+
+		int32_t* r1 = r11;	// mov r1, r11
+		int32_t* r2 = r12;	// mov r2, r12
+		vertCount--;		// sub r10, r10, #1
+		int32_t r3 = *r1++;	// ldr r3, [r1], #4
+
+		do {
+			r8 = (r3 << 16) - r6;	// rsbs r8, r6, r3, lsl #16
+			if (r8 >= 0)
+			{
+				*r2++ = r3;		// strge r3, [r2], #4
+			}
+			r4 = *r1++;			// ldr r4, [r1], #4
+			r9 = (r4<<16) - r6;	// rsb r9, r6, r4, lsl #16
+			r8 ^= r9;			// eors r8, r8, r9
+			if (r8 < 0)			// bpl
+			{
+				r9 = r3 << 16;							// mov r9, r3, lsl #16
+				r8 = (r4 << 16) - r9;					// rsb r8, r9, r4, lsl #16 
+				r8 = r8 >> 16;							// mov r8, r8, asr #16
+				r8 = DivTable(r8);						// ldr r8, [r14, r8, lsl #2]
+				r9 = r5 - (r9 >> 16);					// sub r9, r5, r9, asr #16
+				r9 = r8 * r9;							// mul r9, r8, r9
+				r8 = r3 >> 16;							// mov r8, r3, asr #16
+				r8 = (r4 >> 16) - r8;					// rsb r8, r8, r4, asr #16
+				r8 *= 4;								// mov r8, r8, lsl #2
+				r8 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r9, r8, r8, r9
+				r8 += r3 >> 16;							// add r8, r8, r3, asr #16
+				r8 = r5 | (r8 << 16);					// orr r8, r5, r8, lsl #16
+				*r2++ = r8;								// str r8, [r2], #4
+			}
+			r3 = r4;		// mov r3, r4
+			vertCount--;	// subs r10, r10, #1
+		} while (vertCount != 0);	// bne
+
+		r8 = (r3 << 16) - r6;	// rsbs r8, r6, r3, lsl #16
+		if (r8 >= 0)
+		{
+			*r2++ = r3;			// strge r3, [r2], #4
+		}
+		r4 = *r11;				// ldr r4, [r11]
+		r9 = (r4 << 16) - r6;	// rsb r9, r6, r4, lsl #16
+		r8 ^= r9;				// eors r8, r8, r9
+		if (r8 < 0)				// bpl
+		{
+			r9 = r3 << 16;							// mov r9, r3, lsl #16
+			r8 = (r4 << 16) - r9;					// rsb r8, r9, r4, lsl #16 
+			r8 = r8 >> 16;							// mov r8, r8, asr #16
+			r8 = DivTable(r8);						// ldr r8, [r14, r8, lsl #2]
+			r9 = r5 - (r9 >> 16);					// sub r9, r5, r9, asr #16
+			r9 = r8 * r9;							// mul r9, r8, r9
+			r8 = r3 >> 16;							// mov r8, r3, asr #16
+			r8 = (r4 >> 16) - r8;					// rsb r8, r8, r4, asr #16
+			r8 *= 4;								// mov r8, r8, lsl #2
+			r8 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r9, r8, r8, r9
+			r8 += r3 >> 16;							// add r8, r8, r3, asr #16
+			r8 = r5 | (r8 << 16);					// orr r8, r5, r8, lsl #16
+			*r2++ = r8;								// str r8, [r2], #4
+		}
+
+		vertCount = r2 - r12;	// sub r10, r2, r12 ; mov r10, r10, asr #2
+
+		if (vertCount < 3)
+			return vertCount;
+
+		memcpy(vertBuffer, scratchBuffer, vertCount * sizeof(int32_t));
+	}
+
+	if ((clipFlags & clipFlagRight) != 0)
+	{
+		int32_t const r5 = params->clipRight;	// ldrh r5, [sp, #36]
+		int32_t const r6 = r5 << 16;			// mov r6, r5, lsl #16
+
+		int32_t* r1 = r11;	// mov r1, r11
+		int32_t* r2 = r12;	// mov r2, r12
+		vertCount--;		// sub r10, r10, #1
+		int32_t r3 = *r1++;	// ldr r3, [r1], #4
+
+		do {
+			r8 = (r3 << 16) - r6;	// rsbs r8, r6, r3, lsl #16
+			if (r8 <= 0)
+			{
+				*r2++ = r3;			// strle r3, [r2], #4
+			}
+			r4 = *r1++;				// ldr r4, [r1], #4
+			r9 = (r4 << 16) - r6;	// rsb r9, r6, r4, lsl #16
+			r8 ^= r9;				// eors r8, r8, r9
+			if (r8 < 0)	// bpl
+			{
+				r9 = r3 << 16;							// mov r9, r3, lsl #16
+				r8 = (r4 << 16) - r9;					// rsb r8, r9, r4, lsl #16 
+				r8 = r8 >> 16;							// mov r8, r8, asr #16
+				r8 = DivTable(r8);						// ldr r8, [r14, r8, lsl #2]
+				r9 = r5 - (r9 >> 16);					// sub r9, r5, r9, asr #16
+				r9 = r8 * r9;							// mul r9, r8, r9
+				r8 = r3 >> 16;							// mov r8, r3, asr #16
+				r8 = (r4 >> 16) - r8;					// rsb r8, r8, r4, asr #16
+				r8 *= 4;								// mov r8, r8, lsl #2
+				r8 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r9, r8, r8, r9
+				r8 += r3 >> 16;							// add r8, r8, r3, asr #16
+				r8 = r5 | (r8 << 16);					// orr r8, r5, r8, lsl #16
+				*r2++ = r8;								// str r8, [r2], #4
+			}
+			r3 = r4;		// mov r3, r4
+			vertCount--;	// subs r10, r10, #1
+		} while (vertCount != 0);	// bne
+
+		r8 = (r3 << 16) - r6;	// rsbs r8, r6, r3, lsl #16
+		if (r8 <= 0)
+		{
+			*r2++ = r3;			// strle r3, [r2], #4
+		}
+		r4 = *r11;				// ldr r4, [r11]
+		r9 = (r4 << 16) - r6;	// rsb r9, r6, r4, lsl #16
+		r8 ^= r9;				// eors r8, r8, r9
+		if (r8 < 0)				// bpl
+		{
+			r9 = r3 << 16;							// mov r9, r3, lsl #16
+			r8 = (r4 << 16) - r9;					// rsb r8, r9, r4, lsl #16 
+			r8 = r8 >> 16;							// mov r8, r8, asr #16
+			r8 = DivTable(r8);						// ldr r8, [r14, r8, lsl #2]
+			r9 = r5 - (r9 >> 16);					// sub r9, r5, r9, asr #16
+			r9 = r8 * r9;							// mul r9, r8, r9
+			r8 = r3 >> 16;							// mov r8, r3, asr #16
+			r8 = (r4 >> 16) - r8;					// rsb r8, r8, r4, asr #16
+			r8 *= 4;								// mov r8, r8, lsl #2
+			r8 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r9, r8, r8, r9
+			r8 += r3 >> 16;							// add r8, r8, r3, asr #16
+			r8 = r5 | (r8 << 16);					// orr r8, r5, r8, lsl #16
+			*r2++ = r8;								// str r8, [r2], #4
+		}
+
+		vertCount = r2 - r12;	// sub r10, r2, r12 ; mov r10, r10, asr #2
+
+		if (vertCount < 3)
+			return vertCount;
+
+		memcpy(vertBuffer, scratchBuffer, vertCount * sizeof(int32_t));
+	}
+
+	if ((clipFlags & clipFlagBottom) != 0)
+	{
+		int32_t const r5 = params->clipBottom;	// ldrh r5, [sp, #40]
+		int32_t const r6 = r5 << 16;			// mov r6, r5, lsl #16
+
+		int32_t* r1 = r11;	// mov r1, r11
+		int32_t* r2 = r12;	// mov r2, r12
+		vertCount--;		// sub r10, r10, #1
+		int32_t r3 = *r1++;	// ldr r3, [r1], #4
+
+		do
+		{
+			r8 = r3 - r6;	// subs r8, r3, r6
+			if (r8 <= 0)
+			{
+				*r2++ = r3;	// strle r3, [r2], #4
+			}
+			r4 = *r1++;		// ldr r4, [r1], #4
+			r9 = r4 - r6;	// sub r9, r4, r6
+			r8 ^= r9;		// eors r8, r8, r9
+			if (r8 < 0)		// bpl
+			{
+				r8 = r4 >> 16;							// mov r8, r4, asr #16
+				r8 -= r3 >> 16;							// sub r8, r8, r3, asr #16 
+				r8 = DivTable(r8);						// ldr r8, [r14, r8, lsl #2]
+				r9 = r5 - (r3 >> 16);					// sub r9, r5, r3, asr #16
+				r9 = r8 * r9;							// mul r9, r8, r9
+				r8 = r3 << 16;							// mov r8, r3, lsl #16
+				r8 = (r4 << 16) - r8;					// rsb r8, r8, r4, lsl #16
+				r8 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r9, r8, r8, r9
+				r8 *= 4;								// mov r8, r8, lsl #2
+				r8 += r3 << 16;							// add r8, r8, r3, lsl #16
+				r8 = r6 | ((uint32_t)r8 >> 16);			// orr r8, r6, r8, lsr #16
+				*r2++ = r8;								// str r8, [r2], #4
+			}
+			r3 = r4;		// mov r3, r4
+			vertCount--;	// subs r10, r10, #1
+		} while (vertCount != 0); // bne
+
+		r8 = r3 - r6;	// subs r8, r3, r6
+		if (r8 <= 0)
+		{
+			*r2++ = r3;	// strle r3, [r2], #4
+		}
+		r4 = *r11;		// ldr r4, [r11]
+		r9 = r4 - r6;	// sub r9, r4, r6
+		r8 ^= r9;		// eors r8, r8, r9
+		if (r8 < 0)		// bpl
+		{
+			r8 = r4 >> 16;							// mov r8, r4, asr #16
+			r8 -= r3 >> 16;							// sub r8, r8, r3, asr #16 
+			r8 = DivTable(r8);						// ldr r8, [r14, r8, lsl #2]
+			r9 = r5 - (r3 >> 16);					// sub r9, r5, r3, asr #16
+			r9 = r8 * r9;							// mul r9, r8, r9
+			r8 = r3 << 16;							// mov r8, r3, lsl #16
+			r8 = (r4 << 16) - r8;					// rsb r8, r8, r4, lsl #16
+			r8 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r9, r8, r8, r9
+			r8 *= 4;								// mov r8, r8, lsl #2
+			r8 += r3 << 16;							// add r8, r8, r3, lsl #16
+			r8 = r6 | ((uint32_t)r8 >> 16);			// orr r8, r6, r8, lsr #16
+			*r2++ = r8;								// str r8, [r2], #4
+		}
+
+		vertCount = r2 - r12;	// sub r10, r2, r12 ; mov r10, r10, asr #2
+
+		if (vertCount < 3)
+			return vertCount;
+
+		memcpy(vertBuffer, scratchBuffer, vertCount * sizeof(int32_t));
+	}
+
+	return vertCount;
+}
+
+static void HLE3DBackendDromeRasterizeColoredTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr)
+{
+	UNUSED(params);
+
+	int const scale = backend->b.h->renderScale;
 	uint8_t const colorIndex = cpu->memory.load8(cpu, activeTriPtr+11, NULL);
 
 	int32_t yx0 = cpu->memory.load32(cpu, activeTriPtr+12, NULL);
@@ -330,8 +670,6 @@ static void HLE3DBackendDromeRasterizeColoredTri(struct HLE3DBackendDrome* backe
 	if (yx0 > yx1) { XorSwap(&yx0, &yx1); }
 	if (yx0 > yx2) { XorSwap(&yx0, &yx2); }
 	if (yx1 > yx2) { XorSwap(&yx2, &yx1); }
-
-	int const scale = backend->b.h->renderScale;
 
 	int16_t const Ay = (int16_t)(yx0 >> 16) * scale;
 	int16_t const By = (int16_t)(yx1 >> 16) * scale;
@@ -346,42 +684,42 @@ static void HLE3DBackendDromeRasterizeColoredTri(struct HLE3DBackendDrome* backe
 	{
 		int32_t r7,r8,r9,r10;
 
-		r7 = Cy - By;							//	sub r7, r6, r5
-		r7 = DivTable(r7);						//	ldr r7, [lr, r7, lsl #2
-		r8 = Cx - Bx;							//	sub r8, r3, r2
-		r8 <<= 18;								//	mov r8, r8, lsl #18
-		r7 = ((int64_t)r8 * (int64_t)r7) >> 32;	//	smull r8, r7, r8, r7
-		BCdx = r7;								//	str r7, [sp, #8
-		r8 = By & 7;							//	and r8, r5, #7
-		r8 = 8 - r8;							//	rsb r8, r8, #8
-		r8 = r7 * r8;							//	mul r8, r7, r8
-		r8 /= 8;								//	mov r8, r8, asr #3
-		r8 += Bx << 13;							//	add r8, r8, r2, lsl #13
-		BCx = r8;								//	str r8, [sp, #12
+		r7 = Cy - By;							// sub r7, r6, r5
+		r7 = DivTable(r7);						// ldr r7, [lr, r7, lsl #2
+		r8 = Cx - Bx;							// sub r8, r3, r2
+		r8 <<= 18;								// mov r8, r8, lsl #18
+		r7 = ((int64_t)r8 * (int64_t)r7) >> 32;	// smull r8, r7, r8, r7
+		BCdx = r7;								// str r7, [sp, #8
+		r8 = By & 7;							// and r8, r5, #7
+		r8 = 8 - r8;							// rsb r8, r8, #8
+		r8 = r7 * r8;							// mul r8, r7, r8
+		r8 /= 8;								// mov r8, r8, asr #3
+		r8 += Bx << 13;							// add r8, r8, r2, lsl #13
+		BCx = r8;								// str r8, [sp, #12
 
-		r7 = By - Ay;							//	sub r7, r5, r4
-		r7 = DivTable(r7);						//	ldr r7, [lr, r7, lsl #2
-		r8 = Bx - Ax;							//	sub r8, r2, r1
-		r8 <<= 18;								//	mov r8, r8, lsl #18
-		r7 = ((int64_t)r8 * (int64_t)r7) >> 32;	//	smull r8, r7, r8, r7
-		ABdx = r7;								//	str r7, [sp, #16
-		r10 = Ay & 7;							//	and r10, r4, #7
-		r10 = 8 - r10;							//	rsb r10, r10, #8
-		r8 = r7 * r10;							//	mul r8, r7, r10
-		r8 /= 8;								//	mov r8, r8, asr #3
-		r8 += Ax << 13;							//	add r8, r8, r1, lsl #13
-		ABx = r8;								//	str r8, [sp, #20
+		r7 = By - Ay;							// sub r7, r5, r4
+		r7 = DivTable(r7);						// ldr r7, [lr, r7, lsl #2
+		r8 = Bx - Ax;							// sub r8, r2, r1
+		r8 <<= 18;								// mov r8, r8, lsl #18
+		r7 = ((int64_t)r8 * (int64_t)r7) >> 32;	// smull r8, r7, r8, r7
+		ABdx = r7;								// str r7, [sp, #16
+		r10 = Ay & 7;							// and r10, r4, #7
+		r10 = 8 - r10;							// rsb r10, r10, #8
+		r8 = r7 * r10;							// mul r8, r7, r10
+		r8 /= 8;								// mov r8, r8, asr #3
+		r8 += Ax << 13;							// add r8, r8, r1, lsl #13
+		ABx = r8;								// str r8, [sp, #20
 
-		r9 = Cy - Ay;							//	sub r9, r6, r4
-		r9 = DivTable(r9);						//	ldr r9, [lr, r9, lsl #2
-		r8 = Cx - Ax;							//	sub r8, r3, r1
-		r8 <<= 18;								//	mov r8, r8, lsl #18
-		r9 = ((int64_t)r8 * (int64_t)r9) >> 32;	//	smull r8, r9, r8, r9
-		ACdx = r9;								//	str r9, [sp, #24
-		r8 = r9 * r10;							//	mul r8, r9, r10
-		r8 /= 8;								//	mov r8, r8, asr #3
-		r8 += Ax << 13;							//	add r8, r8, r1, lsl #13
-		ACx = r8;								//	str r8, [sp, #28
+		r9 = Cy - Ay;							// sub r9, r6, r4
+		r9 = DivTable(r9);						// ldr r9, [lr, r9, lsl #2
+		r8 = Cx - Ax;							// sub r8, r3, r1
+		r8 <<= 18;								// mov r8, r8, lsl #18
+		r9 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r8, r9, r8, r9
+		ACdx = r9;								// str r9, [sp, #24
+		r8 = r9 * r10;							// mul r8, r9, r10
+		r8 /= 8;								// mov r8, r8, asr #3
+		r8 += Ax << 13;							// add r8, r8, r1, lsl #13
+		ACx = r8;								// str r8, [sp, #28
 	}
 
 	int32_t const heightAB = (By/8) - (Ay/8);
@@ -429,19 +767,19 @@ static void HLE3DBackendDromeRasterizeColoredTri(struct HLE3DBackendDrome* backe
 	}
 }
 
-static void HLE3DBackendDromeRasterizeStaticTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr)
+static void HLE3DBackendDromeRasterizeStaticTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr)
 {
 	UNUSED(backend);
 	UNUSED(cpu);
+	UNUSED(params);
 	UNUSED(activeTriPtr);
 	UNUSED(renderTarget);
 }
 
-static void HLE3DBackendDromeRasterizeAffineTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr)
+static void HLE3DBackendDromeRasterizeAffineTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr)
 {
-	uint32_t const baseTexPtr = cpu->memory.load32(cpu, cpu->gprs[0]+64, NULL);
 	uint8_t const texIndex = cpu->memory.load8(cpu, activeTriPtr+11, NULL);
-	uint32_t const texPtr = baseTexPtr + (texIndex << 16);
+	uint32_t const texPtr = params->baseTexPtr + (texIndex << 16);
 
 	uint32_t ptrVert0 = activeTriPtr+12;
 	uint32_t ptrVert1 = activeTriPtr+20;
@@ -716,56 +1054,166 @@ static void HLE3DBackendDromeRasterizeAffineTexTri(struct HLE3DBackendDrome* bac
 	}
 }
 
-static void HLE3DBackendDromeRasterizeColoredTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr)
+static void HLE3DBackendDromeRasterizeColoredTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr)
+{
+	uint8_t const clipFlags = cpu->memory.load8(cpu, activeTriPtr+1, NULL);
+
+	int32_t vertBuffer[64];
+	vertBuffer[0] = cpu->memory.load32(cpu, activeTriPtr+12, NULL);
+	vertBuffer[1] = cpu->memory.load32(cpu, activeTriPtr+16, NULL);
+	vertBuffer[2] = cpu->memory.load32(cpu, activeTriPtr+20, NULL);
+
+	int32_t vertCount = ClipEdgePolygon(params, clipFlags, vertBuffer);
+
+	if (vertCount < 3)
+		return;
+
+	int const scale = backend->b.h->renderScale;
+	uint8_t const colorIndex = cpu->memory.load8(cpu, activeTriPtr+11, NULL);
+
+	vertCount -= 2;
+	int32_t yx0 = vertBuffer[0];
+	int32_t yx1 = vertBuffer[vertCount];
+	int32_t yx2 = vertBuffer[vertCount+1];
+
+	do {
+		if (yx0 > yx1) { XorSwap(&yx0, &yx1); }
+		if (yx0 > yx2) { XorSwap(&yx0, &yx2); }
+		if (yx1 > yx2) { XorSwap(&yx2, &yx1); }
+
+		int16_t const Ay = (int16_t)(yx0 >> 16) * scale;
+		int16_t const By = (int16_t)(yx1 >> 16) * scale;
+		int16_t const Cy = (int16_t)(yx2 >> 16) * scale;
+		int16_t const Ax = (int16_t)(yx0 & 0xffff) * scale;
+		int16_t const Bx = (int16_t)(yx1 & 0xffff) * scale;
+		int16_t const Cx = (int16_t)(yx2 & 0xffff) * scale;
+
+		int32_t BCx, BCdx;
+		int32_t ABx, ABdx;
+		int32_t ACx, ACdx;
+		{
+			int32_t r7,r8,r9,r10;
+
+			r7 = Cy - By;							// sub r7, r6, r5
+			r7 = DivTable(r7);						// ldr r7, [lr, r7, lsl #2
+			r8 = Cx - Bx;							// sub r8, r3, r2
+			r8 <<= 18;								// mov r8, r8, lsl #18
+			r7 = ((int64_t)r8 * (int64_t)r7) >> 32;	// smull r8, r7, r8, r7
+			BCdx = r7;								// str r7, [sp, #8
+			r8 = By & 7;							// and r8, r5, #7
+			r8 = 8 - r8;							// rsb r8, r8, #8
+			r8 = r7 * r8;							// mul r8, r7, r8
+			r8 /= 8;								// mov r8, r8, asr #3
+			r8 += Bx << 13;							// add r8, r8, r2, lsl #13
+			BCx = r8;								// str r8, [sp, #12
+
+			r7 = By - Ay;							// sub r7, r5, r4
+			r7 = DivTable(r7);						// ldr r7, [lr, r7, lsl #2
+			r8 = Bx - Ax;							// sub r8, r2, r1
+			r8 <<= 18;								// mov r8, r8, lsl #18
+			r7 = ((int64_t)r8 * (int64_t)r7) >> 32;	// smull r8, r7, r8, r7
+			ABdx = r7;								// str r7, [sp, #16
+			r10 = Ay & 7;							// and r10, r4, #7
+			r10 = 8 - r10;							// rsb r10, r10, #8
+			r8 = r7 * r10;							// mul r8, r7, r10
+			r8 /= 8;								// mov r8, r8, asr #3
+			r8 += Ax << 13;							// add r8, r8, r1, lsl #13
+			ABx = r8;								// str r8, [sp, #20
+
+			r9 = Cy - Ay;							// sub r9, r6, r4
+			r9 = DivTable(r9);						// ldr r9, [lr, r9, lsl #2
+			r8 = Cx - Ax;							// sub r8, r3, r1
+			r8 <<= 18;								// mov r8, r8, lsl #18
+			r9 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r8, r9, r8, r9
+			ACdx = r9;								// str r9, [sp, #24
+			r8 = r9 * r10;							// mul r8, r9, r10
+			r8 /= 8;								// mov r8, r8, asr #3
+			r8 += Ax << 13;							// add r8, r8, r1, lsl #13
+			ACx = r8;								// str r8, [sp, #28
+		}
+
+		int32_t const heightAB = (By/8) - (Ay/8);
+		int32_t const heightBC = (Cy/8) - (By/8);
+
+		if (ABdx > ACdx)
+		{
+			if (heightAB != 0) {
+				FillColoredTrapezoid(
+					renderTarget, scale,
+					ACx, ACdx,
+					ABx, ABdx,
+					Ay/8, heightAB,
+					colorIndex);
+			}
+
+			if (heightBC != 0) {
+				FillColoredTrapezoid(
+					renderTarget, scale,
+					ACx + heightAB*ACdx, ACdx,
+					BCx, BCdx,
+					By/8, heightBC,
+					colorIndex);
+			}
+		}
+		else
+		{
+			if (heightAB != 0) {
+				FillColoredTrapezoid(
+					renderTarget, scale,
+					ABx, ABdx,
+					ACx, ACdx,
+					Ay/8, heightAB,
+					colorIndex);
+			}
+
+			if (heightBC != 0) {
+				FillColoredTrapezoid(
+					renderTarget, scale,
+					BCx, BCdx,
+					ACx + heightAB*ACdx, ACdx,
+					By/8, heightBC,
+					colorIndex);
+			}
+		}
+
+		vertCount--;
+		yx0 = vertBuffer[0];
+		yx1 = vertBuffer[vertCount];
+		yx2 = vertBuffer[vertCount+1];
+	} while (vertCount != 0);
+}
+
+static void HLE3DBackendDromeRasterizeStaticTexTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr)
 {
 	UNUSED(backend);
 	UNUSED(cpu);
+	UNUSED(params);
 	UNUSED(renderTarget);
 	UNUSED(activeTriPtr);
 }
 
-static void HLE3DBackendDromeRasterizeStaticTexTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr)
+static void HLE3DBackendDromeRasterizeAffineTexTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr)
 {
 	UNUSED(backend);
 	UNUSED(cpu);
+	UNUSED(params);
 	UNUSED(renderTarget);
 	UNUSED(activeTriPtr);
 }
 
-static void HLE3DBackendDromeRasterizeAffineTexTriClipped(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr)
-{
-	UNUSED(backend);
-	UNUSED(cpu);
-	UNUSED(renderTarget);
-	UNUSED(activeTriPtr);
-}
-
-static void HLE3DBackendDromeRasterizeSpriteOccluder(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget, uint32_t activeTriPtr)
+static void HLE3DBackendDromeRasterizeSpriteOccluder(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr)
 {
 	uint8_t const spriteIndex = cpu->memory.load8(cpu, activeTriPtr+8, NULL);
 
-	uint32_t const r0 = cpu->gprs[0];
-
-	uint16_t const viewportX      = cpu->memory.load16(cpu, r0+32, NULL);
-	uint16_t const viewportY      = cpu->memory.load16(cpu, r0+34, NULL);
-	uint16_t const viewportWidth  = cpu->memory.load16(cpu, r0+36, NULL);
-	uint16_t const viewportHeight = cpu->memory.load16(cpu, r0+38, NULL);
-
-	uint16_t const clipLeft   = (viewportX*8)+4;
-	uint16_t const clipTop    = (viewportY*8)+4;
-	uint16_t const clipRight  = clipLeft + (viewportWidth*8);
-	uint16_t const clipBottom = clipTop + (viewportHeight*8);
-
-	uint32_t const ptrSpriteParamsTable = r0+96;
-	uint32_t const ptrSpriteParams = ptrSpriteParamsTable + spriteIndex*8;
+	uint32_t const ptrSpriteParams = params->ptrSpriteParamsTable + spriteIndex*8;
 
 	int16_t const spriteX = cpu->memory.load16(cpu, ptrSpriteParams+2, NULL);
 	int16_t const spriteY = cpu->memory.load16(cpu, ptrSpriteParams+4, NULL);
 
-	if (spriteX >= clipLeft / 8 &&
-		spriteX <  clipRight / 8 &&
-		spriteY >= clipTop / 8 &&
-		spriteY <  clipBottom / 8)
+	if (spriteX >= params->clipLeft / 8 &&
+		spriteX <  params->clipRight / 8 &&
+		spriteY >= params->clipTop / 8 &&
+		spriteY <  params->clipBottom / 8)
 	{
 		int const scale = backend->b.h->renderScale;
 		int const stride = 240*scale;
@@ -784,10 +1232,8 @@ static void HLE3DBackendDromeRasterizeSpriteOccluder(struct HLE3DBackendDrome* b
 	}
 }
 
-static void HLE3DBackendDromeFinalizeSpriteOccluders(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, uint8_t* renderTarget)
+static void HLE3DBackendDromeFinalizeSpriteOccluders(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget)
 {
-	uint32_t const r0 = cpu->gprs[0];
-	uint32_t const ptrSpriteParamsTable = r0+96;
 	int const scale = backend->b.h->renderScale;
 	int const stride = 240*scale;
 
@@ -795,7 +1241,7 @@ static void HLE3DBackendDromeFinalizeSpriteOccluders(struct HLE3DBackendDrome* b
 	{
 		uint8_t const spriteIndex = backend->spriteStack[--backend->spriteStackHeight];
 
-		uint32_t const ptrSpriteParams = ptrSpriteParamsTable + spriteIndex*8;
+		uint32_t const ptrSpriteParams = params->ptrSpriteParamsTable + spriteIndex*8;
 
 		int16_t const spriteX = cpu->memory.load16(cpu, ptrSpriteParams+2, NULL);
 		int16_t const spriteY = cpu->memory.load16(cpu, ptrSpriteParams+4, NULL);
