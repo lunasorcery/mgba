@@ -1124,53 +1124,21 @@ static void FillColoredTri(
 	int16_t const Ay = (int16_t)(yx0 >> 16) * scale;
 	int16_t const By = (int16_t)(yx1 >> 16) * scale;
 	int16_t const Cy = (int16_t)(yx2 >> 16) * scale;
+
 	int16_t const Ax = (int16_t)(yx0 & 0xffff) * scale;
 	int16_t const Bx = (int16_t)(yx1 & 0xffff) * scale;
 	int16_t const Cx = (int16_t)(yx2 & 0xffff) * scale;
 
-	int32_t BCx, BCdx;
-	int32_t ABx, ABdx;
-	int32_t ACx, ACdx;
-	{
-		int32_t r7,r8,r9,r10;
+	int32_t const ABdx = ((int64_t)((Bx - Ax) << 18) * (int64_t)DivTable(By - Ay)) >> 32;
+	int32_t const BCdx = ((int64_t)((Cx - Bx) << 18) * (int64_t)DivTable(Cy - By)) >> 32;
+	int32_t const ACdx = ((int64_t)((Cx - Ax) << 18) * (int64_t)DivTable(Cy - Ay)) >> 32;
 
-		r7 = Cy - By;							// sub r7, r6, r5
-		r7 = DivTable(r7);						// ldr r7, [lr, r7, lsl #2
-		r8 = Cx - Bx;							// sub r8, r3, r2
-		r8 <<= 18;								// mov r8, r8, lsl #18
-		r7 = ((int64_t)r8 * (int64_t)r7) >> 32;	// smull r8, r7, r8, r7
-		BCdx = r7;								// str r7, [sp, #8
-		r8 = By & 7;							// and r8, r5, #7
-		r8 = 8 - r8;							// rsb r8, r8, #8
-		r8 = r7 * r8;							// mul r8, r7, r8
-		r8 /= 8;								// mov r8, r8, asr #3
-		r8 += Bx << 13;							// add r8, r8, r2, lsl #13
-		BCx = r8;								// str r8, [sp, #12
+	int32_t const subpixelA = 8 - (Ay & 7);
+	int32_t const subpixelB = 8 - (By & 7);
 
-		r7 = By - Ay;							// sub r7, r5, r4
-		r7 = DivTable(r7);						// ldr r7, [lr, r7, lsl #2
-		r8 = Bx - Ax;							// sub r8, r2, r1
-		r8 <<= 18;								// mov r8, r8, lsl #18
-		r7 = ((int64_t)r8 * (int64_t)r7) >> 32;	// smull r8, r7, r8, r7
-		ABdx = r7;								// str r7, [sp, #16
-		r10 = Ay & 7;							// and r10, r4, #7
-		r10 = 8 - r10;							// rsb r10, r10, #8
-		r8 = r7 * r10;							// mul r8, r7, r10
-		r8 /= 8;								// mov r8, r8, asr #3
-		r8 += Ax << 13;							// add r8, r8, r1, lsl #13
-		ABx = r8;								// str r8, [sp, #20
-
-		r9 = Cy - Ay;							// sub r9, r6, r4
-		r9 = DivTable(r9);						// ldr r9, [lr, r9, lsl #2
-		r8 = Cx - Ax;							// sub r8, r3, r1
-		r8 <<= 18;								// mov r8, r8, lsl #18
-		r9 = ((int64_t)r8 * (int64_t)r9) >> 32;	// smull r8, r9, r8, r9
-		ACdx = r9;								// str r9, [sp, #24
-		r8 = r9 * r10;							// mul r8, r9, r10
-		r8 /= 8;								// mov r8, r8, asr #3
-		r8 += Ax << 13;							// add r8, r8, r1, lsl #13
-		ACx = r8;								// str r8, [sp, #28
-	}
+	int32_t const ABx = (Ax << 13) + ((ABdx * subpixelA) / 8);
+	int32_t const BCx = (Bx << 13) + ((BCdx * subpixelB) / 8);
+	int32_t const ACx = (Ax << 13) + ((ACdx * subpixelA) / 8);
 
 	int32_t const heightAB = (By/8) - (Ay/8);
 	int32_t const heightBC = (Cy/8) - (By/8);
