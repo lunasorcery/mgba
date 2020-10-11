@@ -4,11 +4,8 @@
 #include <mgba/hle3d/backends/drome.h>
 #include <mgba-util/vfs.h>
 
-#define lunaprintf(...) {}
-
 void HLE3DCreate(struct HLE3D* hle3d)
 {
-	lunaprintf("HLE3DCreate\n");
 	hle3d->breakpoints = NULL;
 	hle3d->activeBackend = NULL;
 	HLE3DBackendDromeCreate(&hle3d->backendDromeRacers);
@@ -24,7 +21,6 @@ void HLE3DCreate(struct HLE3D* hle3d)
 
 void HLE3DDestroy(struct HLE3D* hle3d)
 {
-	lunaprintf("HLE3DDestroy\n");
 	HLE3DOnUnloadROM(hle3d);
 	HLE3DClearBreakpoints(hle3d);
 	for(int i=0;i<2;++i) {
@@ -53,8 +49,6 @@ void HLE3DOnLoadROM(struct HLE3D* hle3d, struct VFile* vf)
 {
 	HLE3DOnUnloadROM(hle3d);
 
-	lunaprintf("HLE3DOnLoadROM\n");
-
 	if (!vf) {
 		return;
 	}
@@ -63,20 +57,12 @@ void HLE3DOnLoadROM(struct HLE3D* hle3d, struct VFile* vf)
 	vf->seek(vf, 0xAC, SEEK_SET);
 	vf->read(vf, &identChars, 4);
 
-	lunaprintf(
-		"Ident: %c%c%c%c\n",
-		identChars[0],
-		identChars[1],
-		identChars[2],
-		identChars[3]);
-
 	uint32_t ident = identChars[0];
 	ident |= identChars[1] << 8;
 	ident |= identChars[2] << 16;
 	ident |= identChars[3] << 24;
 
 	if (hle3d->backendDromeRacers.b.isGame(ident)) {
-		lunaprintf("using drome backend!\n");
 		hle3d->activeBackend = &hle3d->backendDromeRacers.b;
 		hle3d->activeBackend->h = hle3d;
 	}
@@ -88,8 +74,6 @@ void HLE3DOnLoadROM(struct HLE3D* hle3d, struct VFile* vf)
 
 void HLE3DOnUnloadROM(struct HLE3D* hle3d)
 {
-	lunaprintf("HLE3DOnUnloadROM\n");
-
 	HLE3DClearBreakpoints(hle3d);
 
 	hle3d->bgMode4active = false;
@@ -102,7 +86,6 @@ void HLE3DOnUnloadROM(struct HLE3D* hle3d)
 
 void HLE3DHook(struct HLE3D* hle3d, struct ARMCore* cpu)
 {
-	lunaprintf("HLE3DHook\n");
 	if (hle3d->activeBackend) {
 		hle3d->activeBackend->hook(hle3d->activeBackend, cpu);
 	}
