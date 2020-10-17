@@ -12,8 +12,8 @@ void HLE3DCreate(struct HLE3D* hle3d)
 
 	hle3d->renderScale = 0;
 
-	hle3d->bgMode4active = false;
 	for(int i=0;i<2;++i) {
+		hle3d->bgMode4active[i] = false;
 		hle3d->bgMode4pal[i] = NULL;
 		hle3d->bgMode4color[i] = NULL;
 	}
@@ -40,6 +40,7 @@ void HLE3DSetRenderScale(struct HLE3D* hle3d, int scale)
 		free(hle3d->bgMode4color[i]);
 	}
 	for(int i=0;i<2;++i) {
+		hle3d->bgMode4active[i] = false;
 		hle3d->bgMode4pal[i] = malloc(240*160*scale*scale);
 		hle3d->bgMode4color[i] = malloc(240*160*scale*scale*4);
 	}
@@ -64,10 +65,10 @@ void HLE3DOnLoadROM(struct HLE3D* hle3d, struct VFile* vf)
 
 	if (hle3d->backendDromeRacers.b.isGame(ident)) {
 		hle3d->activeBackend = &hle3d->backendDromeRacers.b;
-		hle3d->activeBackend->h = hle3d;
 	}
 
 	if (hle3d->activeBackend) {
+		hle3d->activeBackend->h = hle3d;
 		hle3d->activeBackend->init(hle3d->activeBackend, hle3d, ident);
 	}
 }
@@ -76,7 +77,8 @@ void HLE3DOnUnloadROM(struct HLE3D* hle3d)
 {
 	HLE3DClearBreakpoints(hle3d);
 
-	hle3d->bgMode4active = false;
+	hle3d->bgMode4active[0] = false;
+	hle3d->bgMode4active[1] = false;
 
 	if (hle3d->activeBackend) {
 		hle3d->activeBackend->deinit(hle3d->activeBackend);
@@ -84,10 +86,10 @@ void HLE3DOnUnloadROM(struct HLE3D* hle3d)
 	}
 }
 
-void HLE3DHook(struct HLE3D* hle3d, struct ARMCore* cpu)
+void HLE3DHook(struct HLE3D* hle3d, struct ARMCore* cpu, uint32_t pc)
 {
 	if (hle3d->activeBackend) {
-		hle3d->activeBackend->hook(hle3d->activeBackend, cpu);
+		hle3d->activeBackend->hook(hle3d->activeBackend, cpu, pc);
 	}
 }
 
@@ -129,7 +131,7 @@ void HLE3DCheckBreakpoints(struct HLE3D* hle3d, struct ARMCore* cpu)
 	struct HLE3DBreakpoint* bp = hle3d->breakpoints;
 	while (bp) {
 		if (bp->address == pc) {
-			HLE3DHook(hle3d, cpu);
+			HLE3DHook(hle3d, cpu, pc);
 			break;
 		}
 		bp = bp->next;

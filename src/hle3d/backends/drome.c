@@ -52,6 +52,8 @@ struct MultiPtr {
 
 static void HookTransform(struct HLE3DBackendDrome* backend, struct ARMCore* cpu);
 static void HookRasterizer(struct HLE3DBackendDrome* backend, struct ARMCore* cpu);
+static void CommitActiveBuffer(struct HLE3DBackendDrome* backend, struct ARMCore* cpu);
+static void DisableOutgoingBuffer(struct HLE3DBackendDrome* backend, struct ARMCore* cpu);
 
 static void RasterizeColoredTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr);
 static void RasterizeStaticTexTri(struct HLE3DBackendDrome* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t* renderTarget, uint32_t activeTriPtr);
@@ -93,6 +95,9 @@ void HLE3DBackendDromeInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, ui
 		dromeBackend->addrRamActiveFunctionPtr = 0x03000e04;
 		dromeBackend->addrRomTransformFunc     = 0x08064880;
 		dromeBackend->addrRomRasterizeFunc     = 0x08000330;
+		dromeBackend->addrMemcpyFunc           = 0x0300030c;
+		dromeBackend->addrDispcntCopySource    = 0x030019e4;
+		dromeBackend->addrPostDispcntMemcpy    = 0x0806a208;
 	}
 	else if (ident == kIdentHotWheelsStuntTrack)
 	{
@@ -100,6 +105,9 @@ void HLE3DBackendDromeInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, ui
 		dromeBackend->addrRamActiveFunctionPtr = 0x03000dd8;
 		dromeBackend->addrRomTransformFunc     = 0x080ea350;
 		dromeBackend->addrRomRasterizeFunc     = 0x08085e00;
+		dromeBackend->addrMemcpyFunc           = 0x0300030c;
+		dromeBackend->addrDispcntCopySource    = 0x030014e8;
+		dromeBackend->addrPostDispcntMemcpy    = 0x080ed5a8;
 	}
 	else if (ident == kIdentHotWheels2Pack)
 	{
@@ -107,12 +115,17 @@ void HLE3DBackendDromeInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, ui
 		dromeBackend->addrRamActiveFunctionPtr = 0x03000dd8;
 		dromeBackend->addrRomTransformFunc     = 0x088ea350;
 		dromeBackend->addrRomRasterizeFunc     = 0x08885e00;
+		dromeBackend->addrMemcpyFunc           = 0x0300030c;
+		dromeBackend->addrDispcntCopySource    = 0x03001340;
+		dromeBackend->addrPostDispcntMemcpy    = 0x088ed5a8;
 	}
 
 	dromeBackend->spriteStackHeight = 0;
 	memset(dromeBackend->spriteStack, 0, sizeof(dromeBackend->spriteStack));
 
 	HLE3DAddBreakpoint(hle3d, dromeBackend->addrRamExecutionPoint);
+	HLE3DAddBreakpoint(hle3d, dromeBackend->addrMemcpyFunc);
+	HLE3DAddBreakpoint(hle3d, dromeBackend->addrPostDispcntMemcpy);
 }
 
 void HLE3DBackendDromeDeinit(struct HLE3DBackend* backend)
@@ -129,18 +142,30 @@ bool HLE3DBackendDromeIsGame(uint32_t ident)
 		(ident == kIdentHotWheels2Pack);
 }
 
-void HLE3DBackendDromeHook(struct HLE3DBackend* backend, struct ARMCore* cpu)
+void HLE3DBackendDromeHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint32_t pc)
 {
 	struct HLE3DBackendDrome* dromeBackend = (struct HLE3DBackendDrome*)backend;
 
-	uint32_t const activeRamFunctionPtr = cpu->memory.load32(cpu, dromeBackend->addrRamActiveFunctionPtr, NULL);
+	if (pc == dromeBackend->addrRamExecutionPoint) {
+		uint32_t const activeRamFunctionPtr = cpu->memory.load32(cpu, dromeBackend->addrRamActiveFunctionPtr, NULL);
 
-	if (activeRamFunctionPtr == dromeBackend->addrRomTransformFunc) {
-		HookTransform(dromeBackend, cpu);
+		if (activeRamFunctionPtr == dromeBackend->addrRomTransformFunc) {
+			HookTransform(dromeBackend, cpu);
+		}
+
+		if (activeRamFunctionPtr == dromeBackend->addrRomRasterizeFunc) {
+			HookRasterizer(dromeBackend, cpu);
+		}
 	}
 
-	if (activeRamFunctionPtr == dromeBackend->addrRomRasterizeFunc) {
-		HookRasterizer(dromeBackend, cpu);
+	// when we flip buffers, set the one we're retiring to be inactive
+	// and require that we re-activate it when rendering to it
+	if (pc == dromeBackend->addrMemcpyFunc && (uint32_t)(cpu->gprs[1]) == dromeBackend->addrDispcntCopySource) {
+		CommitActiveBuffer(dromeBackend, cpu);
+	}
+
+	if (pc == dromeBackend->addrPostDispcntMemcpy) {
+		DisableOutgoingBuffer(dromeBackend, cpu);
 	}
 }
 
@@ -233,8 +258,8 @@ static void HookRasterizer(struct HLE3DBackendDrome* backend, struct ARMCore* cp
 	params.clipBottom = params.clipTop + (params.viewportHeight*8);
 
 	int const scale = backend->b.h->renderScale;
-	int const activeFrameIndex = (drawBuffer == 0x06000000) ? 0 : 1;
-	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[activeFrameIndex];
+	int const activeFrame = (drawBuffer == 0x06000000) ? 0 : 1;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[activeFrame];
 	memset(renderTargetPal, 0, 240*160*scale*scale);
 
 	uint32_t activeTriPtr = renderStreamPtr;
@@ -242,7 +267,7 @@ static void HookRasterizer(struct HLE3DBackendDrome* backend, struct ARMCore* cp
 
 	// kinda yucky hack for the textured background on the pause menu
 	// since the pause menu has no primitives
-	backend->b.h->bgMode4active = (activeTriType != 0);
+	backend->b.h->bgMode4active[activeFrame] = (activeTriType != 0);
 
 	while (activeTriType != 0) {
 		switch (activeTriType)
@@ -282,8 +307,30 @@ static void HookRasterizer(struct HLE3DBackendDrome* backend, struct ARMCore* cp
 	}
 
 	FinalizeSpriteOccluders(backend, cpu, &params, renderTargetPal);
+}
 
-	uint8_t* renderTargetColor = backend->b.h->bgMode4color[activeFrameIndex];
+static void CommitActiveBuffer(struct HLE3DBackendDrome* backend, struct ARMCore* cpu)
+{
+	// Commit the current palette buffer into color mode, just before we flip the buffers
+
+	uint32_t const newDispcnt = cpu->memory.load32(cpu, backend->addrDispcntCopySource, NULL);
+	uint8_t const mode = (newDispcnt & 0x7);
+
+	if (mode != 4) {
+		return;
+	}
+
+	uint8_t const activeFrame = (newDispcnt >> 4) & 1;
+
+	if (!backend->b.h->bgMode4active[activeFrame]) {
+		return;
+	}
+
+	// commit the colors for the incoming frame
+	int const scale = backend->b.h->renderScale;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[activeFrame];
+	uint8_t* renderTargetColor = backend->b.h->bgMode4color[activeFrame];
+
 	memset(renderTargetColor, 0, 240*160*scale*scale*4);
 	uint8_t palette[256*3];
 	for (int i = 0; i < 256; ++i) {
@@ -305,6 +352,25 @@ static void HookRasterizer(struct HLE3DBackendDrome* backend, struct ARMCore* cp
 			renderTargetColor[i*4+3] = 0xff;
 		}
 	}
+}
+
+static void DisableOutgoingBuffer(struct HLE3DBackendDrome* backend, struct ARMCore* cpu)
+{
+	// disable the outgoing HLE buffer just after we've flipped it
+
+	uint32_t const newDispcnt = cpu->memory.load32(cpu, backend->addrDispcntCopySource, NULL);
+	uint8_t const mode = (newDispcnt & 0x7);
+
+	// disable everything if we're leaving mode 4 entirely
+	if (mode != 4) {
+		backend->b.h->bgMode4active[0] = false;
+		backend->b.h->bgMode4active[1] = false;
+		return;
+	}
+
+	// if we're mode 4, disable the departing frame
+	uint8_t const activeFrame = (newDispcnt >> 4) & 1;
+	backend->b.h->bgMode4active[1-activeFrame] = false;
 }
 
 #define XorSwap(a, b) { \

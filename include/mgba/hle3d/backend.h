@@ -7,5 +7,5 @@ struct HLE3DBackend {
 	void (*init)(struct HLE3DBackend*, struct HLE3D*, uint32_t);
 	void (*deinit)(struct HLE3DBackend*);
 	bool (*isGame)(uint32_t);
-	void (*hook)(struct HLE3DBackend*, struct ARMCore*);
+	void (*hook)(struct HLE3DBackend*, struct ARMCore*, uint32_t);
 };

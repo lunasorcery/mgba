@@ -19,7 +19,7 @@ struct HLE3D {
 
 	int renderScale;
 
-	bool bgMode4active;
+	bool bgMode4active[2];
 	uint8_t* bgMode4pal[2];
 	uint8_t* bgMode4color[2];
 };
@@ -29,7 +29,7 @@ void HLE3DDestroy(struct HLE3D* hle3d);
 void HLE3DSetRenderScale(struct HLE3D* hle3d, int scale);
 void HLE3DOnLoadROM(struct HLE3D* hle3d, struct VFile* vf);
 void HLE3DOnUnloadROM(struct HLE3D* hle3d);
-void HLE3DHook(struct HLE3D* hle3d, struct ARMCore* cpu);
+void HLE3DHook(struct HLE3D* hle3d, struct ARMCore* cpu, uint32_t pc);
 void HLE3DAddBreakpoint(struct HLE3D* hle3d, uint32_t address);
 void HLE3DClearBreakpoints(struct HLE3D* hle3d);
 void HLE3DCheckBreakpoints(struct HLE3D* hle3d, struct ARMCore* cpu);

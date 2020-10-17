@@ -23,6 +23,15 @@ struct HLE3DBackendDrome {
 	uint32_t addrRomTransformFunc;
 	uint32_t addrRomRasterizeFunc;
 
+	// where is the memcpy function in ram
+	uint32_t addrMemcpyFunc;
+
+	// where in ram do we memcpy into DISPCNT from?
+	uint32_t addrDispcntCopySource;
+
+	// where do we return to after the DISPCNT memcpy?
+	uint32_t addrPostDispcntMemcpy;
+
 	int spriteStackHeight;
 	uint8_t spriteStack[32];
 };
@@ -32,4 +41,4 @@ void HLE3DBackendDromeCreate(struct HLE3DBackendDrome* backend);
 void HLE3DBackendDromeInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint32_t ident);
 void HLE3DBackendDromeDeinit(struct HLE3DBackend* backend);
 bool HLE3DBackendDromeIsGame(uint32_t ident);
-void HLE3DBackendDromeHook(struct HLE3DBackend* backend, struct ARMCore* cpu);
+void HLE3DBackendDromeHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint32_t pc);
