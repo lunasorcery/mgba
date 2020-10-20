@@ -326,32 +326,7 @@ static void CommitActiveBuffer(struct HLE3DBackendDrome* backend, struct ARMCore
 		return;
 	}
 
-	// commit the colors for the incoming frame
-	int const scale = backend->b.h->renderScale;
-	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[activeFrame];
-	uint8_t* renderTargetColor = backend->b.h->bgMode4color[activeFrame];
-
-	memset(renderTargetColor, 0, 240*160*scale*scale*4);
-	uint8_t palette[256*3];
-	for (int i = 0; i < 256; ++i) {
-		uint16_t const color555 = cpu->memory.load16(cpu, 0x05000000+i*2, NULL);
-		uint32_t const color888 = mColorFrom555(color555);
-		uint8_t const r = (color888 & 0xff);
-		uint8_t const g = ((color888 >> 8) & 0xff);
-		uint8_t const b = ((color888 >> 16) & 0xff);
-		palette[i*3+0] = r;
-		palette[i*3+1] = g;
-		palette[i*3+2] = b;
-	}
-	for (int i = 0; i < 240*160*scale*scale; ++i) {
-		uint8_t const index = renderTargetPal[i];
-		if (index != 0) {
-			renderTargetColor[i*4+0] = palette[index*3+0];
-			renderTargetColor[i*4+1] = palette[index*3+1];
-			renderTargetColor[i*4+2] = palette[index*3+2];
-			renderTargetColor[i*4+3] = 0xff;
-		}
-	}
+	HLE3DCommitMode4Buffer(backend->b.h, cpu, activeFrame);
 }
 
 static void DisableOutgoingBuffer(struct HLE3DBackendDrome* backend, struct ARMCore* cpu)
