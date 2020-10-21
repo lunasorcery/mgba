@@ -9,7 +9,7 @@ Emulation written by @lunasorcery
 #include <mgba/internal/arm/arm.h>
 #include <mgba/internal/gba/gba.h>
 #include <mgba/hle3d/hle3d.h>
-#include <mgba/hle3d/backends/asterix.h>
+#include <mgba/hle3d/backends/v3d.h>
 
 static uint32_t const
 	kIdentAsterixXXL     = 0x50584c42, // BLXP
@@ -19,31 +19,40 @@ static uint32_t const
 
 static bool const kDebugDraw = false;
 
-static void ClearScreen(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu);
-static void CopyScreen(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu);
-static void FlipBuffers(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu);
-static void FillColoredTrapezoid(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu);
-static void FillTexturedTrapezoid(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint32_t addrUv0, uint32_t addrUv1, uint32_t addrUvRowDelta0, uint32_t addrUvRowDelta1);
+struct RenderParams {
+	uint8_t frontBufferIndex;
+	uint8_t backBufferIndex;
+	int scale;
+	int rtWidth;
+	int rtHeight;
+	int rtTotalPixels;
+};
 
-static void DrawAsterixPlayerSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale, uint8_t paletteMask);
-static void DrawAsterixScaledEnvSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale);
-static void DrawAsterixScaledNpcSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale);
+static void ClearScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+static void CopyScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+static void FlipBuffers(struct HLE3DBackendV3D* backend, struct ARMCore* cpu);
+static void FillColoredTrapezoid(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+static void FillTexturedTrapezoid(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params, uint32_t addrUv0, uint32_t addrUv1, uint32_t addrUvRowDelta0, uint32_t addrUvRowDelta1);
 
-static void DrawDriv3rPlayerSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale);
-static void DrawDriv3rScaledSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale);
+static void DrawAsterixPlayerSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t paletteMask);
+static void DrawAsterixScaledEnvSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+static void DrawAsterixScaledNpcSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+
+static void DrawDriv3rPlayerSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+static void DrawDriv3rScaledSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
 
 
-void HLE3DBackendAsterixCreate(struct HLE3DBackendAsterix* backend)
+void HLE3DBackendV3DCreate(struct HLE3DBackendV3D* backend)
 {
-	backend->b.init   = HLE3DBackendAsterixInit;
-	backend->b.deinit = HLE3DBackendAsterixDeinit;
-	backend->b.isGame = HLE3DBackendAsterixIsGame;
-	backend->b.hook   = HLE3DBackendAsterixHook;
+	backend->b.init   = HLE3DBackendV3DInit;
+	backend->b.deinit = HLE3DBackendV3DDeinit;
+	backend->b.isGame = HLE3DBackendV3DIsGame;
+	backend->b.hook   = HLE3DBackendV3DHook;
 }
 
-void HLE3DBackendAsterixInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint32_t ident)
+void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint32_t ident)
 {
-	struct HLE3DBackendAsterix* v3dBackend = (struct HLE3DBackendAsterix*)backend;
+	struct HLE3DBackendV3D* v3dBackend = (struct HLE3DBackendV3D*)backend;
 
 	// zero out the game-specific values
 	v3dBackend->isAsterix = false;
@@ -157,12 +166,12 @@ void HLE3DBackendAsterixInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, 
 	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncTexture2pxTrapezoid);
 }
 
-void HLE3DBackendAsterixDeinit(struct HLE3DBackend* backend)
+void HLE3DBackendV3DDeinit(struct HLE3DBackend* backend)
 {
 	UNUSED(backend);
 }
 
-bool HLE3DBackendAsterixIsGame(uint32_t ident)
+bool HLE3DBackendV3DIsGame(uint32_t ident)
 {
 	return
 		(ident == kIdentDriv3rEU) ||
@@ -171,19 +180,29 @@ bool HLE3DBackendAsterixIsGame(uint32_t ident)
 		(ident == kIdentAsterixXXL2in1);
 }
 
-void HLE3DBackendAsterixHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint32_t pc)
+void HLE3DBackendV3DHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint32_t pc)
 {
-	struct HLE3DBackendAsterix* v3dBackend = (struct HLE3DBackendAsterix*)backend;
+	struct HLE3DBackendV3D* v3dBackend = (struct HLE3DBackendV3D*)backend;
+
+	// prepare some parameters
+	uint8_t const frame = cpu->memory.load8(cpu, v3dBackend->addrActiveFrame, NULL);
+	struct RenderParams params;
+	params.frontBufferIndex = frame?1:0;
+	params.backBufferIndex = 1-frame;
+	params.scale = backend->h->renderScale;
+	params.rtWidth = GBA_VIDEO_HORIZONTAL_PIXELS * params.scale;
+	params.rtHeight = GBA_VIDEO_VERTICAL_PIXELS * params.scale;
+	params.rtTotalPixels = params.rtWidth * params.rtHeight;
 
 	// clear screen ahead of rendering
 	if (pc == v3dBackend->addrFuncClearScreen) {
-		ClearScreen(v3dBackend, cpu);
+		ClearScreen(v3dBackend, cpu, &params);
 		return;
 	}
 
 	// copy screen ahead of rendering (for bitmap backgrounds)
 	if (pc == v3dBackend->addrFuncCopyScreen) {
-		CopyScreen(v3dBackend, cpu);
+		CopyScreen(v3dBackend, cpu, &params);
 		return;
 	}
 
@@ -195,14 +214,14 @@ void HLE3DBackendAsterixHook(struct HLE3DBackend* backend, struct ARMCore* cpu, 
 
 	// color fill
 	if (pc == v3dBackend->addrFuncColoredTrapezoid) {
-		FillColoredTrapezoid(v3dBackend, cpu);
+		FillColoredTrapezoid(v3dBackend, cpu, &params);
 		return;
 	}
 
 	// texture fill
 	if (pc == v3dBackend->addrFuncTexture1pxTrapezoid) {
 		FillTexturedTrapezoid(
-			v3dBackend, cpu,
+			v3dBackend, cpu, &params,
 			v3dBackend->addrTex1Uv0,
 			v3dBackend->addrTex1Uv1,
 			v3dBackend->addrTex1UvRowDelta0,
@@ -213,7 +232,7 @@ void HLE3DBackendAsterixHook(struct HLE3DBackend* backend, struct ARMCore* cpu, 
 	// texture fill
 	if (pc == v3dBackend->addrFuncTexture2pxTrapezoid) {
 		FillTexturedTrapezoid(
-			v3dBackend, cpu,
+			v3dBackend, cpu, &params,
 			v3dBackend->addrTex2Uv0,
 			v3dBackend->addrTex2Uv1,
 			v3dBackend->addrTex2UvRowDelta0,
@@ -221,57 +240,51 @@ void HLE3DBackendAsterixHook(struct HLE3DBackend* backend, struct ARMCore* cpu, 
 		return;
 	}
 
-	if (v3dBackend->isAsterix) {
-		uint8_t const frame = cpu->memory.load8(cpu, v3dBackend->addrActiveFrame, NULL);
-		uint8_t* renderTargetPal = backend->h->bgMode4pal[1-frame];
-		int const scale = backend->h->renderScale;
-
+	if (v3dBackend->isAsterix)
+	{
 		// menu overlay overwrites the frontbuffer
 		if (pc == v3dBackend->addrFuncAsterixMenuOverlay) {
-			backend->h->bgMode4active[frame] = false;
+			backend->h->bgMode4active[params.frontBufferIndex] = false;
 			return;
 		}
 
 		// screen copies that overwrite 3D data
 		if (pc == v3dBackend->addrFuncAsterixScreenCopyHorizontalScroll ||
 		    pc == v3dBackend->addrFuncAsterixScreenCopyVerticalScroll) {
-			backend->h->bgMode4active[1-frame] = false;
+			backend->h->bgMode4active[params.backBufferIndex] = false;
 			return;
 		}
 
 		if (pc == v3dBackend->addrFuncAsterixPlayerSprite0) {
-			DrawAsterixPlayerSprite(v3dBackend, cpu, renderTargetPal, scale, 0x00);
+			DrawAsterixPlayerSprite(v3dBackend, cpu, &params, 0x00);
 			return;
 		}
 
 		if (pc == v3dBackend->addrFuncAsterixPlayerSprite1) {
-			DrawAsterixPlayerSprite(v3dBackend, cpu, renderTargetPal, scale, 0x10);
+			DrawAsterixPlayerSprite(v3dBackend, cpu, &params, 0x10);
 			return;
 		}
 
 		if (pc == v3dBackend->addrFuncAsterixScaledEnvSprite) {
-			DrawAsterixScaledEnvSprite(v3dBackend, cpu, renderTargetPal, scale);
+			DrawAsterixScaledEnvSprite(v3dBackend, cpu, &params);
 			return;
 		}
 
 		if (pc == v3dBackend->addrFuncAsterixScaledNpcSprite) {
-			DrawAsterixScaledNpcSprite(v3dBackend, cpu, renderTargetPal, scale);
+			DrawAsterixScaledNpcSprite(v3dBackend, cpu, &params);
 			return;
 		}
 	}
 
-	if (v3dBackend->isDriv3r) {
-		uint8_t const frame = cpu->memory.load8(cpu, v3dBackend->addrActiveFrame, NULL);
-		uint8_t* renderTargetPal = backend->h->bgMode4pal[1-frame];
-		int const scale = backend->h->renderScale;
-
+	if (v3dBackend->isDriv3r)
+	{
 		if (pc == v3dBackend->addrFuncDriv3rPlayerSprite) {
-			DrawDriv3rPlayerSprite(v3dBackend, cpu, renderTargetPal, scale);
+			DrawDriv3rPlayerSprite(v3dBackend, cpu, &params);
 			return;
 		}
 
 		if (pc == v3dBackend->addrFuncDriv3rScaledSprite) {
-			DrawDriv3rScaledSprite(v3dBackend, cpu, renderTargetPal, scale);
+			DrawDriv3rScaledSprite(v3dBackend, cpu, &params);
 			return;
 		}
 	}
@@ -279,25 +292,23 @@ void HLE3DBackendAsterixHook(struct HLE3DBackend* backend, struct ARMCore* cpu, 
 	printf("[HLE3D/V3D] Unhandled hook at %08x\n", pc);
 }
 
-static void ClearScreen(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu)
+static void ClearScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
 {
-	//printf("[HLE3D/V3D] ---- clear screen ----\n");
-	uint8_t const frame = cpu->memory.load8(cpu, backend->addrActiveFrame, NULL);
-	backend->b.h->bgMode4active[1-frame] = false;
+	UNUSED(cpu);
 
-	int const scale = backend->b.h->renderScale;
-	memset(backend->b.h->bgMode4pal[1-frame], 0, 240*160*scale*scale);
+	//printf("[HLE3D/V3D] ---- clear screen ----\n");
+
+	backend->b.h->bgMode4active[params->backBufferIndex] = false;
+
+	memset(backend->b.h->bgMode4pal[params->backBufferIndex], 0, params->rtTotalPixels);
 }
 
-static void CopyScreen(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu)
+static void CopyScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
 {
 	//printf("[HLE3D/V3D] ---- copy screen ----\n");
-	uint8_t const frame = cpu->memory.load8(cpu, backend->addrActiveFrame, NULL);
-	backend->b.h->bgMode4active[1-frame] = false;
+	backend->b.h->bgMode4active[params->backBufferIndex] = false;
 
-	int const scale = backend->b.h->renderScale;
 	uint32_t const srcAddr = cpu->memory.load32(cpu, backend->addrScreenCopySource, NULL);
-
 	struct GBA* gba = (struct GBA*)cpu->master;
 	struct GBAMemory* memory = &gba->memory;
 	uint8_t const srcRegion = (srcAddr >> 24);
@@ -316,18 +327,18 @@ static void CopyScreen(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu)
 		return;
 	}
 
-	if (scale == 1)
+	if (params->scale == 1)
 	{
-		memcpy(backend->b.h->bgMode4pal[1-frame], rawSrcPtr, 240*160);
+		memcpy(backend->b.h->bgMode4pal[params->backBufferIndex], rawSrcPtr, params->rtTotalPixels);
 	}
 	else
 	{
-		uint8_t* rawDstPtr = backend->b.h->bgMode4pal[1-frame];
-		for (int y=0;y<160;++y) {
-			for (int sy=0;sy<scale;++sy) {
-				for (int x=0;x<240;++x) {
-					for (int sx=0;sx<scale;++sx) {
-						*rawDstPtr++ = rawSrcPtr[y*240+x];
+		uint8_t* rawDstPtr = backend->b.h->bgMode4pal[params->backBufferIndex];
+		for (int y = 0; y < GBA_VIDEO_VERTICAL_PIXELS; ++y) {
+			for (int sy = 0; sy < params->scale; ++sy) {
+				for (int x = 0; x < GBA_VIDEO_HORIZONTAL_PIXELS; ++x) {
+					for (int sx = 0; sx < params->scale; ++sx) {
+						*rawDstPtr++ = rawSrcPtr[y*GBA_VIDEO_HORIZONTAL_PIXELS+x];
 					}
 				}
 			}
@@ -335,79 +346,68 @@ static void CopyScreen(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu)
 	}
 }
 
-static void FlipBuffers(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu)
+static void FlipBuffers(struct HLE3DBackendV3D* backend, struct ARMCore* cpu)
 {
 	//printf("[HLE3D/V3D] ---- flip buffers ----\n");
 	uint16_t const value = cpu->gprs[2];
 	uint8_t const mode = (value & 0x7);
 	if (mode == 4) {
-		uint8_t const frame = (value >> 4) & 1;
-		backend->b.h->bgMode4active[1-frame] = false;
-		HLE3DCommitMode4Buffer(backend->b.h, cpu, frame);
+		uint8_t const frontBufferIndex = (value >> 4) & 1;
+		uint8_t const backBufferIndex = 1-frontBufferIndex;
+		backend->b.h->bgMode4active[backBufferIndex] = false;
+		HLE3DCommitMode4Buffer(backend->b.h, cpu, frontBufferIndex);
 	} else {
 		backend->b.h->bgMode4active[0] = false;
 		backend->b.h->bgMode4active[1] = false;
 	}
 }
 
-static void FillColoredTrapezoid(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu)
+static void FillColoredTrapezoid(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
 {
-	uint32_t const r5 = cpu->gprs[5];
-	uint32_t const r7 = cpu->gprs[7];
-	uint32_t const r8 = cpu->gprs[8];
-	uint32_t const r10 = cpu->gprs[10];
-
-	uint8_t const frame = cpu->memory.load8(cpu, backend->addrActiveFrame, NULL);
-	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[1-frame];
-	backend->b.h->bgMode4active[1-frame] = true;
-	int const scale = backend->b.h->renderScale;
-	int const stride = 240*scale;
+	backend->b.h->bgMode4active[params->backBufferIndex] = true;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
 
 	uint8_t const color = cpu->memory.load8(cpu, backend->addrColoredPolyColor, NULL);
+
+	uint32_t const r5  = cpu->gprs[5];  // height
+	uint32_t const r7  = cpu->gprs[7];  // x1
+	uint32_t const r8  = cpu->gprs[8];  // x0
+	uint32_t const r10 = cpu->gprs[10]; // destination vram pointer
 
 	uint16_t const x0 = (r8 >> 16);
 	uint16_t const x1 = (r7 >> 16);
 	int16_t const dx0 = (r8 & 0xffff);
 	int16_t const dx1 = (r7 & 0xffff);
 
-	int const top = ((r10-0x06000000)%0xa000)/240;
+	int const top = ((r10-0x06000000)%0xa000)/GBA_VIDEO_HORIZONTAL_PIXELS;
 
-	for (int y = 0; y < (int)r5*scale; ++y) {
-		int const left = (x0*scale+(dx0*y)) >> 8;
-		int const right = (x1*scale+(dx1*y)) >> 8;
+	for (int y = 0; y < (int)r5*params->scale; ++y) {
+		int const left = (x0*params->scale+(dx0*y)) >> 8;
+		int const right = (x1*params->scale+(dx1*y)) >> 8;
 
 		if (right > left) {
-			memset(&renderTargetPal[(top*scale+y)*stride+left], color, right-left);
+			memset(&renderTargetPal[(top*params->scale+y)*params->rtWidth+left], color, right-left);
 		}
 	}
 }
 
-static void FillTexturedTrapezoid(
-	struct HLE3DBackendAsterix* backend,
-	struct ARMCore* cpu,
-	uint32_t addrUv0,
-	uint32_t addrUv1,
-	uint32_t addrUvRowDelta0,
-	uint32_t addrUvRowDelta1)
+static void FillTexturedTrapezoid(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params, uint32_t addrUv0, uint32_t addrUv1, uint32_t addrUvRowDelta0, uint32_t addrUvRowDelta1)
 {
-	uint32_t const r5 = cpu->gprs[5];
-	uint32_t const r7 = cpu->gprs[7];
-	uint32_t const r8 = cpu->gprs[8];
-	uint32_t const r10 = cpu->gprs[10];
-	uint32_t const texPtr = cpu->gprs[11];
+	backend->b.h->bgMode4active[params->backBufferIndex] = true;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
 
-	uint8_t const frame = cpu->memory.load8(cpu, backend->addrActiveFrame, NULL);
-	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[1-frame];
-	backend->b.h->bgMode4active[1-frame] = true;
-	int const scale = backend->b.h->renderScale;
-	int const stride = 240*scale;
+	uint32_t const r5  = cpu->gprs[5];  // height
+	uint32_t const r7  = cpu->gprs[7];  // x1
+	uint32_t const r8  = cpu->gprs[8];  // x0
+	uint32_t const r10 = cpu->gprs[10]; // destination vram pointer
+	uint32_t const texPtr = cpu->gprs[11];
 
 	uint16_t const x0 = (r8 >> 16);
 	uint16_t const x1 = (r7 >> 16);
 	int16_t const dx0 = (r8 & 0xffff);
 	int16_t const dx1 = (r7 & 0xffff);
 
-	int const top = ((r10-0x06000000)%0xa000)/240;
+	int const top = ((r10-0x06000000)%0xa000)/GBA_VIDEO_HORIZONTAL_PIXELS;
 
 	uint32_t const uv0 = cpu->memory.load32(cpu, addrUv0, NULL);
 	uint32_t const uv1 = cpu->memory.load32(cpu, addrUv1, NULL);
@@ -423,29 +423,32 @@ static void FillTexturedTrapezoid(
 	int16_t const vRowDelta0 = (uvRowDelta0 & 0xffff);
 	int16_t const vRowDelta1 = (uvRowDelta1 & 0xffff);
 
-	for (int y = 0; y < (int)r5*scale; ++y) {
-		int const left = (x0*scale+(dx0*y)) >> 8;
-		int const right = (x1*scale+(dx1*y)) >> 8;
+	for (int y = 0; y < (int)r5*params->scale; ++y) {
+		int const left  = (x0*params->scale+(dx0*y)) >> 8;
+		int const right = (x1*params->scale+(dx1*y)) >> 8;
 
 		int /*uint32_t*/ const w = right-left;
 
-		int /*int16_t*/ const uLeft = u0+(uRowDelta0*y)/scale;
-		int /*int16_t*/ const uRight = u1+(uRowDelta1*y)/scale;
-		int /*int16_t*/ const vLeft = v0+(vRowDelta0*y)/scale;
-		int /*int16_t*/ const vRight = v1+(vRowDelta1*y)/scale;
+		int /*int16_t*/ const uLeft  = u0+(uRowDelta0*y)/params->scale;
+		int /*int16_t*/ const uRight = u1+(uRowDelta1*y)/params->scale;
+		int /*int16_t*/ const vLeft  = v0+(vRowDelta0*y)/params->scale;
+		int /*int16_t*/ const vRight = v1+(vRowDelta1*y)/params->scale;
 
 		for (int x = left; x < right; ++x) {
 			uint16_t const u = uLeft+((uRight-uLeft)*(x-left))/w;
 			uint16_t const v = vLeft+((vRight-vLeft)*(x-left))/w;
-			renderTargetPal[(top*scale+y)*stride+x] = cpu->memory.load8(cpu, texPtr+(v&0xff00)+(u>>8), NULL);
+			renderTargetPal[(top*params->scale+y)*params->rtWidth+x] = cpu->memory.load8(cpu, texPtr+(v&0xff00)+(u>>8), NULL);
 		}
 	}
 }
 
 
 
-static void DrawAsterixPlayerSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale, uint8_t paletteMask)
+static void DrawAsterixPlayerSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t paletteMask)
 {
+	backend->b.h->bgMode4active[params->backBufferIndex] = true;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
+
 	uint32_t const r11 = cpu->gprs[11];
 	uint32_t spriteInfoPtr = cpu->memory.load32(cpu, r11, NULL);
 	bool const mirror = (spriteInfoPtr & 0x80000000u) != 0;
@@ -460,21 +463,23 @@ static void DrawAsterixPlayerSprite(struct HLE3DBackendAsterix* backend, struct 
 
 	if (!mirror) {
 		if (kDebugDraw) {
-			HLE3DDebugDrawRect(backend->b.h, baseX+offsetX, baseY+offsetY, width, height, 0xff0000);
+			HLE3DDebugDrawRect(backend->b.h, (baseX + offsetX), (baseY + offsetY), width, height, 0xff0000);
 		}
 
-		for (int y=0;y<height;++y) {
-			for (int x=0;x<width;++x) {
-				int const gx = baseX+offsetX+x;
-				int const gy = baseY+offsetY+y;
-				if (gx >= 0 && gx < 240 && gy >= 0 && gy < 160) {
-					uint8_t const idx = (cpu->memory.load8(cpu, spritePtr + ((y*width+x)/2), NULL) >> ((x%2)?0:4)) & 0xf;
-					if (idx != 0) {
-						for (int sy=0;sy<scale;++sy) {
-							for (int sx=0;sx<scale;++sx) {
-								int const cx = gx*scale+sx;
-								int const cy = gy*scale+sy;
-								renderTarget[cy*240*scale+cx] = idx | paletteMask;
+		for (int y = 0; y < height; ++y) {
+			int const gy = baseY+offsetY+y;
+			if (gy >= 0 && gy < GBA_VIDEO_VERTICAL_PIXELS) {
+				for (int x = 0; x < width; ++x) {
+					int const gx = baseX+offsetX+x;
+					if (gx >= 0 && gx < GBA_VIDEO_HORIZONTAL_PIXELS) {
+						uint8_t const idx = (cpu->memory.load8(cpu, spritePtr + ((y*width+x)/2), NULL) >> ((x%2)?0:4)) & 0xf;
+						if (idx != 0) {
+							for (int sy = 0; sy < params->scale; ++sy) {
+								int const cy = gy*params->scale+sy;
+								for (int sx = 0; sx < params->scale; ++sx) {
+									int const cx = gx*params->scale+sx;
+									renderTargetPal[cy*params->rtWidth+cx] = idx | paletteMask;
+								}
 							}
 						}
 					}
@@ -486,18 +491,20 @@ static void DrawAsterixPlayerSprite(struct HLE3DBackendAsterix* backend, struct 
 			HLE3DDebugDrawRect(backend->b.h, baseX-offsetX-width, baseY+offsetY, width, height, 0xff0000);
 		}
 
-		for (int y=0;y<height;++y) {
-			for (int x=0;x<width;++x) {
-				int const gx = baseX-offsetX-width+x;
-				int const gy = baseY+offsetY+y;
-				if (gx >= 0 && gx < 240 && gy >= 0 && gy < 160) {
-					uint8_t const idx = (cpu->memory.load8(cpu, spritePtr + ((y*width+width-1-x)/2), NULL) >> ((x%2)?4:0)) & 0xf;
-					if (idx != 0) {
-						for (int sy=0;sy<scale;++sy) {
-							for (int sx=0;sx<scale;++sx) {
-								int const cx = gx*scale+sx;
-								int const cy = gy*scale+sy;
-								renderTarget[cy*240*scale+cx] = idx | paletteMask;
+		for (int y = 0; y < height; ++y) {
+			int const gy = baseY+offsetY+y;
+			if (gy >= 0 && gy < GBA_VIDEO_VERTICAL_PIXELS) {
+				for (int x = 0; x < width; ++x) {
+					int const gx = baseX-offsetX-width+x;
+					if (gx >= 0 && gx < GBA_VIDEO_HORIZONTAL_PIXELS) {
+						uint8_t const idx = (cpu->memory.load8(cpu, spritePtr + ((y*width+width-1-x)/2), NULL) >> ((x%2)?4:0)) & 0xf;
+						if (idx != 0) {
+							for (int sy = 0; sy < params->scale; ++sy) {
+								int const cy = gy*params->scale+sy;
+								for (int sx = 0; sx < params->scale; ++sx) {
+									int const cx = gx*params->scale+sx;
+									renderTargetPal[cy*params->rtWidth+cx] = idx | paletteMask;
+								}
 							}
 						}
 					}
@@ -507,8 +514,11 @@ static void DrawAsterixPlayerSprite(struct HLE3DBackendAsterix* backend, struct 
 	}
 }
 
-static void DrawAsterixScaledEnvSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale)
+static void DrawAsterixScaledEnvSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
 {
+	backend->b.h->bgMode4active[params->backBufferIndex] = true;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
+
 	uint32_t const r11 = cpu->gprs[11];
 
 	uint32_t const texPtr = cpu->memory.load32(cpu, r11+0,  NULL); // r11
@@ -522,26 +532,23 @@ static void DrawAsterixScaledEnvSprite(struct HLE3DBackendAsterix* backend, stru
 	uint32_t const u1     = cpu->memory.load32(cpu, r11+32, NULL); // lr
 
 	if (kDebugDraw) {
-		int16_t const height = y1 - y0;
-		int16_t const width = x1 - x0;
-		HLE3DDebugDrawRect(backend->b.h, x0, y0, width, height, 0x0000ff);
+		HLE3DDebugDrawRect(backend->b.h, x0, y0, (x1 - x0), (y1 - y0), 0x0000ff);
 	}
 
-	int const left = x0*scale;
-	int const right = x1*scale;
-	int const top = y0*scale;
-	int const bottom = y1*scale;
-	int const stride = 240*scale;
+	int const left   = x0*params->scale;
+	int const right  = x1*params->scale;
+	int const top    = y0*params->scale;
+	int const bottom = y1*params->scale;
 
-	for (int y=top;y<bottom;++y) {
-		if (y >= 0 && y < 160*scale) {
-			for (int x=left;x<right;++x) {
-				if (x >= 0 && x < 240*scale) {
+	for (int y = top; y < bottom; ++y) {
+		if (y >= 0 && y < params->rtHeight) {
+			int const v = v0 + ((y-top)*(v1-v0))/(bottom-top);
+			for (int x = left; x < right; ++x) {
+				if (x >= 0 && x < params->rtWidth) {
 					int const u = u0 + ((x-left)*(u1-u0))/(right-left);
-					int const v = v0 + ((y-top)*(v1-v0))/(bottom-top);
 					uint8_t const texel = cpu->memory.load8(cpu, texPtr+v*256+u, NULL);
 					if (texel != 0) {
-						renderTarget[y*stride+x] = texel;
+						renderTargetPal[y*params->rtWidth+x] = texel;
 					}
 				}
 			}
@@ -549,8 +556,11 @@ static void DrawAsterixScaledEnvSprite(struct HLE3DBackendAsterix* backend, stru
 	}
 }
 
-static void DrawAsterixScaledNpcSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale)
+static void DrawAsterixScaledNpcSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
 {
+	backend->b.h->bgMode4active[params->backBufferIndex] = true;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
+
 	uint32_t const r11 = cpu->gprs[11];
 
 	uint32_t const spriteStride = cpu->memory.load32(cpu, r11+0,  NULL); // r0
@@ -566,27 +576,24 @@ static void DrawAsterixScaledNpcSprite(struct HLE3DBackendAsterix* backend, stru
 	uint32_t const u1           = cpu->memory.load32(cpu, r11+40, NULL); // r10
 
 	if (kDebugDraw) {
-		int16_t const height = y1 - y0;
-		int16_t const width = x1 - x0;
-		HLE3DDebugDrawRect(backend->b.h, x0, y0, width, height, 0x00ff00);
+		HLE3DDebugDrawRect(backend->b.h, x0, y0, (x1 - x0), (y1 - y0), 0x00ff00);
 	}
 
-	int const left = x0*scale;
-	int const right = x1*scale;
-	int const top = y0*scale;
-	int const bottom = y1*scale;
-	int const rtStride = 240*scale;
+	int const left   = x0*params->scale;
+	int const right  = x1*params->scale;
+	int const top    = y0*params->scale;
+	int const bottom = y1*params->scale;
 	uint8_t const paletteOverlay = (palette << 4);
 
-	for (int y=top;y<bottom;++y) {
-		if (y >= 0 && y < 160*scale) {
-			for (int x=left;x<right;++x) {
-				if (x >= 0 && x < 240*scale) {
+	for (int y = top; y < bottom; ++y) {
+		if (y >= 0 && y < params->rtHeight) {
+			int const v = v0 + ((y-top)*(v1-v0))/(bottom-top);
+			for (int x = left; x < right; ++x) {
+				if (x >= 0 && x < params->rtWidth) {
 					int const u = u0 + ((x-left)*(u1-u0))/(right-left);
-					int const v = v0 + ((y-top)*(v1-v0))/(bottom-top);
 					uint8_t const texel = (cpu->memory.load8(cpu, texPtr+(v*spriteStride)+(u/2), NULL) >> ((u%2)?0:4)) & 0xf;
 					if (texel != 0) {
-						renderTarget[y*rtStride+x] = texel | paletteOverlay;
+						renderTargetPal[y*params->rtWidth+x] = texel | paletteOverlay;
 					}
 				}
 			}
@@ -596,8 +603,11 @@ static void DrawAsterixScaledNpcSprite(struct HLE3DBackendAsterix* backend, stru
 
 
 
-static void DrawDriv3rPlayerSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale)
+static void DrawDriv3rPlayerSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
 {
+	backend->b.h->bgMode4active[params->backBufferIndex] = true;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
+
 	uint32_t const r11 = cpu->gprs[11];
 	uint32_t spriteInfoPtr = cpu->memory.load32(cpu, r11, NULL);
 	bool const mirror = (spriteInfoPtr & 0x80000000u) != 0;
@@ -615,21 +625,23 @@ static void DrawDriv3rPlayerSprite(struct HLE3DBackendAsterix* backend, struct A
 
 	if (!mirror) {
 		if (kDebugDraw) {
-			HLE3DDebugDrawRect(backend->b.h, baseX+offsetX, baseY+offsetY, width, height, 0xff0000);
+			HLE3DDebugDrawRect(backend->b.h, (baseX + offsetX), (baseY + offsetY), width, height, 0xff0000);
 		}
 
-		for (int y=0;y<height;++y) {
-			for (int x=0;x<width;++x) {
-				int const gx = baseX+offsetX+x;
-				int const gy = baseY+offsetY+y;
-				if (gx >= 0 && gx < 240 && gy >= 0 && gy < 160) {
-					uint8_t const idx = cpu->memory.load8(cpu, spritePtr + (y*width+x), NULL);
-					if (idx != 0) {
-						for (int sy=0;sy<scale;++sy) {
-							for (int sx=0;sx<scale;++sx) {
-								int const cx = gx*scale+sx;
-								int const cy = gy*scale+sy;
-								renderTarget[cy*240*scale+cx] = idx;
+		for (int y =0 ; y < height; ++y) {
+			int const gy = baseY+offsetY+y;
+			if (gy >= 0 && gy < GBA_VIDEO_VERTICAL_PIXELS) {
+				for (int x =0 ; x < width; ++x) {
+					int const gx = baseX+offsetX+x;
+					if (gx >= 0 && gx < GBA_VIDEO_HORIZONTAL_PIXELS) {
+						uint8_t const idx = cpu->memory.load8(cpu, spritePtr + (y*width+x), NULL);
+						if (idx != 0) {
+							for (int sy = 0; sy < params->scale; ++sy) {
+								int const cy = gy*params->scale+sy;
+								for (int sx = 0; sx < params->scale; ++sx) {
+									int const cx = gx*params->scale+sx;
+									renderTargetPal[cy*params->rtWidth+cx] = idx;
+								}
 							}
 						}
 					}
@@ -638,21 +650,23 @@ static void DrawDriv3rPlayerSprite(struct HLE3DBackendAsterix* backend, struct A
 		}
 	} else {
 		if (kDebugDraw) {
-			HLE3DDebugDrawRect(backend->b.h, baseX-offsetX-width, baseY+offsetY, width, height, 0xff0000);
+			HLE3DDebugDrawRect(backend->b.h, (baseX - offsetX - width), (baseY + offsetY), width, height, 0xff0000);
 		}
 
-		for (int y=0;y<height;++y) {
-			for (int x=0;x<width;++x) {
-				int const gx = baseX-offsetX-width+x;
-				int const gy = baseY+offsetY+y;
-				if (gx >= 0 && gx < 240 && gy >= 0 && gy < 160) {
-					uint8_t const idx = cpu->memory.load8(cpu, spritePtr + (y*width+width-1-x), NULL);
-					if (idx != 0) {
-						for (int sy=0;sy<scale;++sy) {
-							for (int sx=0;sx<scale;++sx) {
-								int const cx = gx*scale+sx;
-								int const cy = gy*scale+sy;
-								renderTarget[cy*240*scale+cx] = idx;
+		for (int y = 0; y < height; ++y) {
+			int const gy = baseY+offsetY+y;
+			if (gy >= 0 && gy < GBA_VIDEO_VERTICAL_PIXELS) {
+				for (int x = 0; x < width; ++x) {
+					int const gx = baseX-offsetX-width+x;
+					if (gx >= 0 && gx < GBA_VIDEO_HORIZONTAL_PIXELS) {
+						uint8_t const idx = cpu->memory.load8(cpu, spritePtr + (y*width+width-1-x), NULL);
+						if (idx != 0) {
+							for (int sy = 0; sy < params->scale; ++sy) {
+								int const cy = gy*params->scale+sy;
+								for (int sx = 0; sx < params->scale; ++sx) {
+									int const cx = gx*params->scale+sx;
+									renderTargetPal[cy*params->rtWidth+cx] = idx;
+								}
 							}
 						}
 					}
@@ -662,8 +676,11 @@ static void DrawDriv3rPlayerSprite(struct HLE3DBackendAsterix* backend, struct A
 	}
 }
 
-static void DrawDriv3rScaledSprite(struct HLE3DBackendAsterix* backend, struct ARMCore* cpu, uint8_t* renderTarget, int scale)
+static void DrawDriv3rScaledSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
 {
+	backend->b.h->bgMode4active[params->backBufferIndex] = true;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
+
 	uint32_t const r11 = cpu->gprs[11];
 
 	uint32_t const texPtr       = cpu->memory.load32(cpu, r11+0,  NULL); // r0
@@ -678,26 +695,23 @@ static void DrawDriv3rScaledSprite(struct HLE3DBackendAsterix* backend, struct A
 	int32_t  const spriteStride = cpu->memory.load32(cpu, r11+36, NULL); // r9
 
 	if (kDebugDraw) {
-		int16_t const height = y1 - y0;
-		int16_t const width = x1 - x0;
-		HLE3DDebugDrawRect(backend->b.h, x0, y0, width, height, 0x0000ff);
+		HLE3DDebugDrawRect(backend->b.h, x0, y0, (x1 - x0), (y1 - y0), 0x0000ff);
 	}
 
-	int const left = x0*scale;
-	int const right = x1*scale;
-	int const top = y0*scale;
-	int const bottom = y1*scale;
-	int const stride = 240*scale;
+	int const left   = x0*params->scale;
+	int const right  = x1*params->scale;
+	int const top    = y0*params->scale;
+	int const bottom = y1*params->scale;
 
-	for (int y=top;y<bottom;++y) {
-		if (y >= 0 && y < 160*scale) {
-			for (int x=left;x<right;++x) {
-				if (x >= 0 && x < 240*scale) {
+	for (int y = top; y < bottom; ++y) {
+		if (y >= 0 && y < params->rtHeight) {
+			for (int x = left; x < right; ++x) {
+				if (x >= 0 && x < params->rtWidth) {
 					int const u = u0 + ((x-left)*(u1-u0))/(right-left);
 					int const v = v0 + ((y-top)*(v1-v0))/(bottom-top);
 					uint8_t const texel = cpu->memory.load8(cpu, texPtr+v*spriteStride+u, NULL);
 					if (texel != 0) {
-						renderTarget[y*stride+x] = texel;
+						renderTargetPal[y*params->rtWidth+x] = texel;
 					}
 				}
 			}
