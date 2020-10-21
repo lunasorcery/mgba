@@ -2,8 +2,6 @@
 #include <mgba/internal/arm/isa-inlines.h>
 #include <mgba-util/vfs.h>
 #include <mgba/hle3d/hle3d.h>
-#include <mgba/hle3d/backends/asterix.h>
-#include <mgba/hle3d/backends/drome.h>
 
 void HLE3DCreate(struct HLE3D* hle3d)
 {
@@ -68,6 +66,13 @@ void HLE3DOnLoadROM(struct HLE3D* hle3d, struct VFile* vf)
 	ident |= identChars[2] << 16;
 	ident |= identChars[3] << 24;
 
+	int const scale = hle3d->renderScale;
+	for(int i=0;i<2;++i) {
+		hle3d->bgMode4active[i] = false;
+		memset(hle3d->bgMode4pal[i], 0, 240*160*scale*scale);
+		memset(hle3d->bgMode4color[i], 0, 240*160*scale*scale*4);
+	}
+
 	if (hle3d->backendAsterixXXL.b.isGame(ident)) {
 		hle3d->activeBackend = &hle3d->backendAsterixXXL.b;
 	} else if (hle3d->backendDromeRacers.b.isGame(ident)) {
@@ -85,8 +90,12 @@ void HLE3DOnUnloadROM(struct HLE3D* hle3d)
 	HLE3DClearBreakpoints(hle3d);
 	HLE3DDebugClear(hle3d);
 
-	hle3d->bgMode4active[0] = false;
-	hle3d->bgMode4active[1] = false;
+	int const scale = hle3d->renderScale;
+	for(int i=0;i<2;++i) {
+		hle3d->bgMode4active[i] = false;
+		memset(hle3d->bgMode4pal[i], 0, 240*160*scale*scale);
+		memset(hle3d->bgMode4color[i], 0, 240*160*scale*scale*4);
+	}
 
 	if (hle3d->activeBackend) {
 		hle3d->activeBackend->deinit(hle3d->activeBackend);
