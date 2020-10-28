@@ -5,6 +5,8 @@
 struct HLE3DBackendV3D {
 	struct HLE3DBackend b;
 
+	uint32_t ident;
+
 	uint32_t addrFuncClearScreen;
 	uint32_t addrFuncCopyScreen;
 	uint32_t addrScreenCopySource;
@@ -50,6 +52,9 @@ struct HLE3DBackendV3D {
 	uint32_t addrFuncAsterixMenuOverlay;
 	uint32_t addrFuncAsterixScreenCopyHorizontalScroll;
 	uint32_t addrFuncAsterixScreenCopyVerticalScroll;
+
+	uint32_t addrFuncAsterix2in1GameSelection;
+	uint32_t addrFuncVRally3Stuntman2in1GameSelection;
 };
 
 void HLE3DBackendV3DCreate(struct HLE3DBackendV3D* backend);

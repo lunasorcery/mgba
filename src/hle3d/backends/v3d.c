@@ -37,6 +37,8 @@ struct RenderParams {
 	int rtTotalPixels;
 };
 
+static void SetupBreakpoints(struct HLE3DBackendV3D* backend);
+
 static void ClearScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
 static void CopyScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
 static void FlipBuffers(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, uint32_t pc);
@@ -71,6 +73,8 @@ void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint
 {
 	struct HLE3DBackendV3D* v3dBackend = (struct HLE3DBackendV3D*)backend;
 
+	v3dBackend->ident = ident;
+
 	// zero out the game-specific values
 	v3dBackend->isVRally3 = false;
 	v3dBackend->addrFuncVRally3ScaledEnvSprite = 0;
@@ -95,200 +99,39 @@ void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint
 	v3dBackend->addrFuncDriv3rPlayerSprite = 0;
 	v3dBackend->addrFuncDriv3rScaledSprite = 0;
 
+	v3dBackend->addrFuncAsterix2in1GameSelection = 0;
+	v3dBackend->addrFuncVRally3Stuntman2in1GameSelection = 0;
+
 	if (ident == kIdentVRally3EU || ident == kIdentVRally3JP || ident == kIdentVRally3NA)
 	{
 		v3dBackend->isVRally3 = true;
-
-		// shared
-
-		v3dBackend->addrFuncClearScreen  = 0x03003318;
-		v3dBackend->addrFuncCopyScreen   = 0x0300625c;
-		v3dBackend->addrScreenCopySource = 0x030062ec;
-		v3dBackend->addrFuncFlipBuffers  = 0x0300779c;
-		v3dBackend->addrFuncFlipBuffers2 = 0x030077dc;
-		v3dBackend->addrFuncFlipBuffers3 = 0x030077a4;
-		v3dBackend->addrActiveFrame      = 0x02038ac5;
-
-		v3dBackend->addrFuncTexture1pxTrapezoid = 0x03003aa8;
-		v3dBackend->addrTex1UvRowDelta0 = 0x03003a9c;
-		v3dBackend->addrTex1UvRowDelta1 = 0x03003a94;
-		v3dBackend->addrTex1Uv0         = 0x03003a98;
-		v3dBackend->addrTex1Uv1         = 0x03003a90;
-
-		v3dBackend->addrFuncTexture2pxTrapezoid = 0;
-		v3dBackend->addrTex2UvRowDelta0 = 0;
-		v3dBackend->addrTex2UvRowDelta1 = 0;
-		v3dBackend->addrTex2Uv0         = 0;
-		v3dBackend->addrTex2Uv1         = 0;
-
-		v3dBackend->addrFuncColoredTrapezoid = 0x03003884;
-
-		// game-specific
-
-		v3dBackend->addrFuncVRally3ScaledEnvSprite = 0x03003554;
-		v3dBackend->addrFuncVRally3VehicleInterior = 0x03006b58;
-		v3dBackend->addrVRally3VehicleSpriteStride = 0x03004d9c;
-
-		// VehicleSprite calls into 03004B60
-		// DrawText calls into 03006DE8
-		// we can't hook there directly because they're loops
-		if (ident == kIdentVRally3EU)
-		{
-			v3dBackend->addrFuncVRally3VehicleSprite = 0x08007708;
-			v3dBackend->addrFuncVRally3DrawText = 0x08033684;
-		}
-		if (ident == kIdentVRally3JP)
-		{
-			v3dBackend->addrFuncVRally3VehicleSprite = 0x08007704;
-			v3dBackend->addrFuncVRally3DrawText = 0x08033688;
-		}
-		if (ident == kIdentVRally3NA)
-		{
-			v3dBackend->addrFuncVRally3VehicleSprite = 0x08007720;
-			v3dBackend->addrFuncVRally3DrawText = 0x080336A4;
-		}
-
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3ScaledEnvSprite);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3VehicleInterior);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3VehicleSprite);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3DrawText);
+		SetupBreakpoints(v3dBackend);
 	}
 	else if (ident == kIdentStuntmanEU || ident == kIdentStuntmanNA)
 	{
 		v3dBackend->isStuntman = true;
-
-		// shared
-
-		v3dBackend->addrFuncClearScreen  = 0x03004d88;
-		v3dBackend->addrFuncCopyScreen   = 0x03006458;
-		v3dBackend->addrScreenCopySource = 0x030064ec;
-		v3dBackend->addrFuncFlipBuffers  = 0x03007280;
-		v3dBackend->addrFuncFlipBuffers2 = 0x030072b8;
-		v3dBackend->addrFuncFlipBuffers3 = 0;
-		v3dBackend->addrActiveFrame      = 0x02038e0f;
-
-		v3dBackend->addrFuncTexture1pxTrapezoid = 0x0300591c;
-		v3dBackend->addrTex1UvRowDelta0 = 0x030052d4;
-		v3dBackend->addrTex1UvRowDelta1 = 0x030052d8;
-		v3dBackend->addrTex1Uv0         = 0x030052dc;
-		v3dBackend->addrTex1Uv1         = 0x030052e0;
-
-		v3dBackend->addrFuncTexture2pxTrapezoid = 0x030054e4;
-		v3dBackend->addrTex2UvRowDelta0 = 0x030052d4;
-		v3dBackend->addrTex2UvRowDelta1 = 0x030052d8;
-		v3dBackend->addrTex2Uv0         = 0x030052dc;
-		v3dBackend->addrTex2Uv1         = 0x030052e0;
-
-		v3dBackend->addrFuncColoredTrapezoid = 0x030050a0;
-
-		// game-specific
-
-		v3dBackend->addrFuncStuntmanSprite0 = 0x03005ffc;
-		v3dBackend->addrFuncStuntmanSprite1 = 0x030061e0;
-
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncStuntmanSprite0);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncStuntmanSprite1);
+		SetupBreakpoints(v3dBackend);
 	}
-	else if (ident == kIdentAsterixXXL || ident == kIdentAsterixXXL2in1)
+	else if (ident == kIdentAsterixXXL)
 	{
 		v3dBackend->isAsterix = true;
-
-		// shared
-
-		v3dBackend->addrFuncClearScreen  = 0x03004198;
-		v3dBackend->addrFuncCopyScreen   = 0x03006834;
-		v3dBackend->addrScreenCopySource = 0x03006a00;
-		v3dBackend->addrFuncFlipBuffers  = 0x030075b8;
-		v3dBackend->addrFuncFlipBuffers2 = 0;
-		v3dBackend->addrFuncFlipBuffers3 = 0;
-		v3dBackend->addrActiveFrame      = 0x0203dc1b;
-
-		v3dBackend->addrFuncTexture1pxTrapezoid = 0x03004940;
-		v3dBackend->addrTex1UvRowDelta0 = 0x0300472c;
-		v3dBackend->addrTex1UvRowDelta1 = 0x03004730;
-		v3dBackend->addrTex1Uv0         = 0x03004734;
-		v3dBackend->addrTex1Uv1         = 0x03004738;
-
-		v3dBackend->addrFuncTexture2pxTrapezoid = 0x03004940;
-		v3dBackend->addrTex2UvRowDelta0 = 0x0300472c;
-		v3dBackend->addrTex2UvRowDelta1 = 0x03004730;
-		v3dBackend->addrTex2Uv0         = 0x03004734;
-		v3dBackend->addrTex2Uv1         = 0x03004738;
-
-		v3dBackend->addrFuncColoredTrapezoid = 0x030044f0;
-
-		// game-specific
-
-		v3dBackend->addrFuncAsterixPlayerSprite0   = 0x03005e0c;
-		v3dBackend->addrFuncAsterixPlayerSprite1   = 0x03005f98;
-		v3dBackend->addrFuncAsterixScaledEnvSprite = 0x03006144;
-		v3dBackend->addrFuncAsterixScaledNpcSprite = 0x03006328;
-
-		if (ident == kIdentAsterixXXL)
-		{
-			v3dBackend->addrFuncAsterixMenuOverlay = 0x0805c5f0;
-		}
-		if (ident == kIdentAsterixXXL2in1)
-		{
-			v3dBackend->addrFuncAsterixMenuOverlay = 0x0885f8f0;
-		}
-
-		v3dBackend->addrFuncAsterixScreenCopyHorizontalScroll = 0x030068c4;
-		v3dBackend->addrFuncAsterixScreenCopyVerticalScroll   = 0x03006934;
-
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixPlayerSprite0);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixPlayerSprite1);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixScaledEnvSprite);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixScaledNpcSprite);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixMenuOverlay);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixScreenCopyHorizontalScroll);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixScreenCopyVerticalScroll);
+		SetupBreakpoints(v3dBackend);
 	}
-	else if (ident == kIdentDriv3rEU || ident == kIdentDriv3rNA)
+	else if (ident == kIdentDriv3rEU || ident == kIdentDriv3rEU)
 	{
 		v3dBackend->isDriv3r = true;
-
-		// shared
-
-		v3dBackend->addrFuncClearScreen  = 0x03004984;
-		v3dBackend->addrFuncCopyScreen   = 0x03004a98;
-		v3dBackend->addrScreenCopySource = 0x03004b2c;
-		v3dBackend->addrFuncFlipBuffers  = 0x030078c0;
-		v3dBackend->addrFuncFlipBuffers2 = 0;
-		v3dBackend->addrFuncFlipBuffers3 = 0;
-		v3dBackend->addrActiveFrame      = 0x0203ab41;
-
-		v3dBackend->addrFuncTexture1pxTrapezoid = 0x03005454;
-		v3dBackend->addrTex1UvRowDelta0 = 0x03005b34;
-		v3dBackend->addrTex1UvRowDelta1 = 0x03005b38;
-		v3dBackend->addrTex1Uv0         = 0x03005b3c;
-		v3dBackend->addrTex1Uv1         = 0x03005b40;
-
-		v3dBackend->addrFuncTexture2pxTrapezoid = 0x03005ccc;
-		v3dBackend->addrTex2UvRowDelta0 = 0x030061d4;
-		v3dBackend->addrTex2UvRowDelta1 = 0x030061d8;
-		v3dBackend->addrTex2Uv0         = 0x030061dc;
-		v3dBackend->addrTex2Uv1         = 0x030061e0;
-
-		v3dBackend->addrFuncColoredTrapezoid = 0x03004cb0;
-
-		// game-specific
-
-		v3dBackend->addrFuncDriv3rPlayerSprite = 0x030063d4;
-		v3dBackend->addrFuncDriv3rScaledSprite = 0x030061e4;
-
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncDriv3rPlayerSprite);
-		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncDriv3rScaledSprite);
+		SetupBreakpoints(v3dBackend);
 	}
-
-	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncClearScreen);
-	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncCopyScreen);
-	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncFlipBuffers);
-	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncFlipBuffers2);
-	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncFlipBuffers3);
-	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncColoredTrapezoid);
-	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncTexture1pxTrapezoid);
-	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncTexture2pxTrapezoid);
+	else if (ident == kIdentVRally3Stuntman2in1)
+	{
+		v3dBackend->addrFuncVRally3Stuntman2in1GameSelection = 0x08000638;
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3Stuntman2in1GameSelection);
+	}
+	else if (ident == kIdentAsterixXXL2in1)
+	{
+		v3dBackend->addrFuncAsterix2in1GameSelection = 0x0885037c;
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterix2in1GameSelection);
+	}
 }
 
 void HLE3DBackendV3DDeinit(struct HLE3DBackend* backend)
@@ -314,6 +157,26 @@ bool HLE3DBackendV3DIsGame(uint32_t ident)
 void HLE3DBackendV3DHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint32_t pc)
 {
 	struct HLE3DBackendV3D* v3dBackend = (struct HLE3DBackendV3D*)backend;
+
+	if (pc == v3dBackend->addrFuncVRally3Stuntman2in1GameSelection) {
+		if (cpu->gprs[0] == 0) {
+			v3dBackend->isVRally3 = true;
+		} else {
+			v3dBackend->isStuntman = true;
+		}
+		HLE3DClearBreakpoints(v3dBackend->b.h);
+		SetupBreakpoints(v3dBackend);
+		return;
+	}
+
+	if (pc == v3dBackend->addrFuncAsterix2in1GameSelection) {
+		if (cpu->gprs[0] != 0) {
+			v3dBackend->isAsterix = true;
+			HLE3DClearBreakpoints(v3dBackend->b.h);
+			SetupBreakpoints(v3dBackend);
+		}
+		return;
+	}
 
 	// prepare some parameters
 	struct RenderParams params;
@@ -459,6 +322,203 @@ void HLE3DBackendV3DHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint
 	}
 
 	printf("[HLE3D/V3D] Unhandled hook at %08x\n", pc);
+}
+
+static void SetupBreakpoints(struct HLE3DBackendV3D* v3dBackend)
+{
+	struct HLE3D* hle3d = v3dBackend->b.h;
+
+	if (v3dBackend->isVRally3)
+	{
+		// shared
+
+		v3dBackend->addrFuncClearScreen  = 0x03003318;
+		v3dBackend->addrFuncCopyScreen   = 0x0300625c;
+		v3dBackend->addrScreenCopySource = 0x030062ec;
+		v3dBackend->addrFuncFlipBuffers  = 0x0300779c;
+		v3dBackend->addrFuncFlipBuffers2 = 0x030077dc;
+		v3dBackend->addrFuncFlipBuffers3 = 0x030077a4;
+		v3dBackend->addrActiveFrame      = 0x02038ac5;
+
+		v3dBackend->addrFuncTexture1pxTrapezoid = 0x03003aa8;
+		v3dBackend->addrTex1UvRowDelta0 = 0x03003a9c;
+		v3dBackend->addrTex1UvRowDelta1 = 0x03003a94;
+		v3dBackend->addrTex1Uv0         = 0x03003a98;
+		v3dBackend->addrTex1Uv1         = 0x03003a90;
+
+		v3dBackend->addrFuncTexture2pxTrapezoid = 0;
+		v3dBackend->addrTex2UvRowDelta0 = 0;
+		v3dBackend->addrTex2UvRowDelta1 = 0;
+		v3dBackend->addrTex2Uv0         = 0;
+		v3dBackend->addrTex2Uv1         = 0;
+
+		v3dBackend->addrFuncColoredTrapezoid = 0x03003884;
+
+		// game-specific
+
+		v3dBackend->addrFuncVRally3ScaledEnvSprite = 0x03003554;
+		v3dBackend->addrFuncVRally3VehicleInterior = 0x03006b58;
+		v3dBackend->addrVRally3VehicleSpriteStride = 0x03004d9c;
+
+		// VehicleSprite calls into 03004B60
+		// DrawText calls into 03006DE8
+		// we can't hook there directly because they're loops
+		if (v3dBackend->ident == kIdentVRally3EU)
+		{
+			v3dBackend->addrFuncVRally3VehicleSprite = 0x08007708;
+			v3dBackend->addrFuncVRally3DrawText = 0x08033684;
+		}
+		if (v3dBackend->ident == kIdentVRally3JP)
+		{
+			v3dBackend->addrFuncVRally3VehicleSprite = 0x08007704;
+			v3dBackend->addrFuncVRally3DrawText = 0x08033688;
+		}
+		if (v3dBackend->ident == kIdentVRally3NA)
+		{
+			v3dBackend->addrFuncVRally3VehicleSprite = 0x08007720;
+			v3dBackend->addrFuncVRally3DrawText = 0x080336A4;
+		}
+		if (v3dBackend->ident == kIdentVRally3Stuntman2in1)
+		{
+			v3dBackend->addrFuncVRally3VehicleSprite = 0x08407708;
+			v3dBackend->addrFuncVRally3DrawText = 0x08433684;
+		}
+
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3ScaledEnvSprite);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3VehicleInterior);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3VehicleSprite);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3DrawText);
+	}
+	else if (v3dBackend->isStuntman)
+	{
+		// shared
+
+		v3dBackend->addrFuncClearScreen  = 0x03004d88;
+		v3dBackend->addrFuncCopyScreen   = 0x03006458;
+		v3dBackend->addrScreenCopySource = 0x030064ec;
+		v3dBackend->addrFuncFlipBuffers  = 0x03007280;
+		v3dBackend->addrFuncFlipBuffers2 = 0x030072b8;
+		v3dBackend->addrFuncFlipBuffers3 = 0;
+		v3dBackend->addrActiveFrame      = 0x02038e0f;
+
+		v3dBackend->addrFuncTexture1pxTrapezoid = 0x0300591c;
+		v3dBackend->addrTex1UvRowDelta0 = 0x030052d4;
+		v3dBackend->addrTex1UvRowDelta1 = 0x030052d8;
+		v3dBackend->addrTex1Uv0         = 0x030052dc;
+		v3dBackend->addrTex1Uv1         = 0x030052e0;
+
+		v3dBackend->addrFuncTexture2pxTrapezoid = 0x030054e4;
+		v3dBackend->addrTex2UvRowDelta0 = 0x030052d4;
+		v3dBackend->addrTex2UvRowDelta1 = 0x030052d8;
+		v3dBackend->addrTex2Uv0         = 0x030052dc;
+		v3dBackend->addrTex2Uv1         = 0x030052e0;
+
+		v3dBackend->addrFuncColoredTrapezoid = 0x030050a0;
+
+		// game-specific
+
+		v3dBackend->addrFuncStuntmanSprite0 = 0x03005ffc;
+		v3dBackend->addrFuncStuntmanSprite1 = 0x030061e0;
+
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncStuntmanSprite0);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncStuntmanSprite1);
+	}
+	else if (v3dBackend->isAsterix)
+	{
+		// shared
+
+		v3dBackend->addrFuncClearScreen  = 0x03004198;
+		v3dBackend->addrFuncCopyScreen   = 0x03006834;
+		v3dBackend->addrScreenCopySource = 0x03006a00;
+		v3dBackend->addrFuncFlipBuffers  = 0x030075b8;
+		v3dBackend->addrFuncFlipBuffers2 = 0;
+		v3dBackend->addrFuncFlipBuffers3 = 0;
+		v3dBackend->addrActiveFrame      = 0x0203dc1b;
+
+		v3dBackend->addrFuncTexture1pxTrapezoid = 0x03004940;
+		v3dBackend->addrTex1UvRowDelta0 = 0x0300472c;
+		v3dBackend->addrTex1UvRowDelta1 = 0x03004730;
+		v3dBackend->addrTex1Uv0         = 0x03004734;
+		v3dBackend->addrTex1Uv1         = 0x03004738;
+
+		v3dBackend->addrFuncTexture2pxTrapezoid = 0x03004940;
+		v3dBackend->addrTex2UvRowDelta0 = 0x0300472c;
+		v3dBackend->addrTex2UvRowDelta1 = 0x03004730;
+		v3dBackend->addrTex2Uv0         = 0x03004734;
+		v3dBackend->addrTex2Uv1         = 0x03004738;
+
+		v3dBackend->addrFuncColoredTrapezoid = 0x030044f0;
+
+		// game-specific
+
+		v3dBackend->addrFuncAsterixPlayerSprite0   = 0x03005e0c;
+		v3dBackend->addrFuncAsterixPlayerSprite1   = 0x03005f98;
+		v3dBackend->addrFuncAsterixScaledEnvSprite = 0x03006144;
+		v3dBackend->addrFuncAsterixScaledNpcSprite = 0x03006328;
+
+		if (v3dBackend->ident == kIdentAsterixXXL)
+		{
+			v3dBackend->addrFuncAsterixMenuOverlay = 0x0805c5f0;
+		}
+		if (v3dBackend->ident == kIdentAsterixXXL2in1)
+		{
+			v3dBackend->addrFuncAsterixMenuOverlay = 0x0885f8f0;
+		}
+
+		v3dBackend->addrFuncAsterixScreenCopyHorizontalScroll = 0x030068c4;
+		v3dBackend->addrFuncAsterixScreenCopyVerticalScroll   = 0x03006934;
+
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixPlayerSprite0);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixPlayerSprite1);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixScaledEnvSprite);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixScaledNpcSprite);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixMenuOverlay);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixScreenCopyHorizontalScroll);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncAsterixScreenCopyVerticalScroll);
+	}
+	else if (v3dBackend->isDriv3r)
+	{
+		// shared
+
+		v3dBackend->addrFuncClearScreen  = 0x03004984;
+		v3dBackend->addrFuncCopyScreen   = 0x03004a98;
+		v3dBackend->addrScreenCopySource = 0x03004b2c;
+		v3dBackend->addrFuncFlipBuffers  = 0x030078c0;
+		v3dBackend->addrFuncFlipBuffers2 = 0;
+		v3dBackend->addrFuncFlipBuffers3 = 0;
+		v3dBackend->addrActiveFrame      = 0x0203ab41;
+
+		v3dBackend->addrFuncTexture1pxTrapezoid = 0x03005454;
+		v3dBackend->addrTex1UvRowDelta0 = 0x03005b34;
+		v3dBackend->addrTex1UvRowDelta1 = 0x03005b38;
+		v3dBackend->addrTex1Uv0         = 0x03005b3c;
+		v3dBackend->addrTex1Uv1         = 0x03005b40;
+
+		v3dBackend->addrFuncTexture2pxTrapezoid = 0x03005ccc;
+		v3dBackend->addrTex2UvRowDelta0 = 0x030061d4;
+		v3dBackend->addrTex2UvRowDelta1 = 0x030061d8;
+		v3dBackend->addrTex2Uv0         = 0x030061dc;
+		v3dBackend->addrTex2Uv1         = 0x030061e0;
+
+		v3dBackend->addrFuncColoredTrapezoid = 0x03004cb0;
+
+		// game-specific
+
+		v3dBackend->addrFuncDriv3rPlayerSprite = 0x030063d4;
+		v3dBackend->addrFuncDriv3rScaledSprite = 0x030061e4;
+
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncDriv3rPlayerSprite);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncDriv3rScaledSprite);
+	}
+
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncClearScreen);
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncCopyScreen);
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncFlipBuffers);
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncFlipBuffers2);
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncFlipBuffers3);
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncColoredTrapezoid);
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncTexture1pxTrapezoid);
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncTexture2pxTrapezoid);
 }
 
 static void ClearScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
