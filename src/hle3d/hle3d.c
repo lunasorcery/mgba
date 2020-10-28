@@ -112,6 +112,9 @@ void HLE3DHook(struct HLE3D* hle3d, struct ARMCore* cpu, uint32_t pc)
 
 void HLE3DAddBreakpoint(struct HLE3D* hle3d, uint32_t address)
 {
+	if (address == 0)
+		return;
+
 	// skip if it's already here
 	struct HLE3DBreakpoint* bp = hle3d->breakpoints;
 	while (bp) {

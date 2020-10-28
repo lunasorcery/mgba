@@ -9,10 +9,11 @@ struct HLE3DBackendV3D {
 	uint32_t addrFuncCopyScreen;
 	uint32_t addrScreenCopySource;
 	uint32_t addrFuncFlipBuffers;
+	uint32_t addrFuncFlipBuffers2;
+	uint32_t addrFuncFlipBuffers3;
 	uint32_t addrActiveFrame;
 
 	uint32_t addrFuncColoredTrapezoid;
-	uint32_t addrColoredPolyColor;
 
 	uint32_t addrFuncTexture1pxTrapezoid;
 	uint32_t addrTex1UvRowDelta0;
@@ -25,6 +26,17 @@ struct HLE3DBackendV3D {
 	uint32_t addrTex2UvRowDelta1;
 	uint32_t addrTex2Uv0;
 	uint32_t addrTex2Uv1;
+
+	bool isVRally3;
+	uint32_t addrFuncVRally3ScaledEnvSprite;
+	uint32_t addrFuncVRally3VehicleInterior;
+	uint32_t addrFuncVRally3VehicleSprite;
+	uint32_t addrFuncVRally3DrawText;
+	uint32_t addrVRally3VehicleSpriteStride;
+
+	bool isStuntman;
+	uint32_t addrFuncStuntmanSprite0;
+	uint32_t addrFuncStuntmanSprite1;
 
 	bool isDriv3r;
 	uint32_t addrFuncDriv3rPlayerSprite;

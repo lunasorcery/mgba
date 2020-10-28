@@ -1,5 +1,7 @@
 /*
 High-Level Emulation of 3D engine from:
+- V-Rally 3 (2002)
+- Stuntman (2003)
 - Asterix & Obelix XXL (2004)
 - Driv3r (2005)
 
@@ -12,11 +14,18 @@ Emulation written by @lunasorcery
 #include <mgba/hle3d/backends/v3d.h>
 
 static uint32_t const
-	kIdentAsterixXXL     = 0x50584c42, // BLXP
-	kIdentAsterixXXL2in1 = 0x50413242, // B2AP
-	kIdentDriv3rEU       = 0x50523342, // B3RP
-	kIdentDriv3rNA       = 0x45523342; // B3RE
+	kIdentVRally3EU           = 0x50525641, // AVRP
+	kIdentVRally3JP           = 0x4a525641, // AVRJ
+	kIdentVRally3NA           = 0x45525641, // AVRE
+	kIdentStuntmanEU          = 0x50585541, // AUXP
+	kIdentStuntmanNA          = 0x45585541, // AUXE
+	kIdentVRally3Stuntman2in1 = 0x50534342, // BCSP
+	kIdentAsterixXXL          = 0x50584c42, // BLXP
+	kIdentAsterixXXL2in1      = 0x50413242, // B2AP
+	kIdentDriv3rEU            = 0x50523342, // B3RP
+	kIdentDriv3rNA            = 0x45523342; // B3RE
 
+static bool const kDebugPrint = false;
 static bool const kDebugDraw = false;
 
 struct RenderParams {
@@ -30,9 +39,17 @@ struct RenderParams {
 
 static void ClearScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
 static void CopyScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
-static void FlipBuffers(struct HLE3DBackendV3D* backend, struct ARMCore* cpu);
+static void FlipBuffers(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, uint32_t pc);
 static void FillColoredTrapezoid(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
 static void FillTexturedTrapezoid(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params, uint32_t addrUv0, uint32_t addrUv1, uint32_t addrUvRowDelta0, uint32_t addrUvRowDelta1);
+
+static void DrawVRally3ScaledEnvSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+static void DrawVRally3VehicleInterior(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+static void DrawVRally3VehicleSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+static void DrawVRally3Text(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+
+static void DrawStuntmanSprite0(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
+static void DrawStuntmanSprite1(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
 
 static void DrawAsterixPlayerSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params, uint8_t paletteMask);
 static void DrawAsterixScaledEnvSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params);
@@ -55,6 +72,16 @@ void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint
 	struct HLE3DBackendV3D* v3dBackend = (struct HLE3DBackendV3D*)backend;
 
 	// zero out the game-specific values
+	v3dBackend->isVRally3 = false;
+	v3dBackend->addrFuncVRally3ScaledEnvSprite = 0;
+	v3dBackend->addrFuncVRally3VehicleSprite = 0;
+	v3dBackend->addrFuncVRally3DrawText = 0;
+	v3dBackend->addrVRally3VehicleSpriteStride = 0;
+
+	v3dBackend->isStuntman = false;
+	v3dBackend->addrFuncStuntmanSprite0 = 0;
+	v3dBackend->addrFuncStuntmanSprite1 = 0;
+
 	v3dBackend->isAsterix = false;
 	v3dBackend->addrFuncAsterixPlayerSprite0   = 0;
 	v3dBackend->addrFuncAsterixPlayerSprite1   = 0;
@@ -68,7 +95,101 @@ void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint
 	v3dBackend->addrFuncDriv3rPlayerSprite = 0;
 	v3dBackend->addrFuncDriv3rScaledSprite = 0;
 
-	if (ident == kIdentAsterixXXL || ident == kIdentAsterixXXL2in1)
+	if (ident == kIdentVRally3EU || ident == kIdentVRally3JP || ident == kIdentVRally3NA)
+	{
+		v3dBackend->isVRally3 = true;
+
+		// shared
+
+		v3dBackend->addrFuncClearScreen  = 0x03003318;
+		v3dBackend->addrFuncCopyScreen   = 0x0300625c;
+		v3dBackend->addrScreenCopySource = 0x030062ec;
+		v3dBackend->addrFuncFlipBuffers  = 0x0300779c;
+		v3dBackend->addrFuncFlipBuffers2 = 0x030077dc;
+		v3dBackend->addrFuncFlipBuffers3 = 0x030077a4;
+		v3dBackend->addrActiveFrame      = 0x02038ac5;
+
+		v3dBackend->addrFuncTexture1pxTrapezoid = 0x03003aa8;
+		v3dBackend->addrTex1UvRowDelta0 = 0x03003a9c;
+		v3dBackend->addrTex1UvRowDelta1 = 0x03003a94;
+		v3dBackend->addrTex1Uv0         = 0x03003a98;
+		v3dBackend->addrTex1Uv1         = 0x03003a90;
+
+		v3dBackend->addrFuncTexture2pxTrapezoid = 0;
+		v3dBackend->addrTex2UvRowDelta0 = 0;
+		v3dBackend->addrTex2UvRowDelta1 = 0;
+		v3dBackend->addrTex2Uv0         = 0;
+		v3dBackend->addrTex2Uv1         = 0;
+
+		v3dBackend->addrFuncColoredTrapezoid = 0x03003884;
+
+		// game-specific
+
+		v3dBackend->addrFuncVRally3ScaledEnvSprite = 0x03003554;
+		v3dBackend->addrFuncVRally3VehicleInterior = 0x03006b58;
+		v3dBackend->addrVRally3VehicleSpriteStride = 0x03004d9c;
+
+		// VehicleSprite calls into 03004B60
+		// DrawText calls into 03006DE8
+		// we can't hook there directly because they're loops
+		if (ident == kIdentVRally3EU)
+		{
+			v3dBackend->addrFuncVRally3VehicleSprite = 0x08007708;
+			v3dBackend->addrFuncVRally3DrawText = 0x08033684;
+		}
+		if (ident == kIdentVRally3JP)
+		{
+			v3dBackend->addrFuncVRally3VehicleSprite = 0x08007704;
+			v3dBackend->addrFuncVRally3DrawText = 0x08033688;
+		}
+		if (ident == kIdentVRally3NA)
+		{
+			v3dBackend->addrFuncVRally3VehicleSprite = 0x08007720;
+			v3dBackend->addrFuncVRally3DrawText = 0x080336A4;
+		}
+
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3ScaledEnvSprite);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3VehicleInterior);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3VehicleSprite);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncVRally3DrawText);
+	}
+	else if (ident == kIdentStuntmanEU || ident == kIdentStuntmanNA)
+	{
+		v3dBackend->isStuntman = true;
+
+		// shared
+
+		v3dBackend->addrFuncClearScreen  = 0x03004d88;
+		v3dBackend->addrFuncCopyScreen   = 0x03006458;
+		v3dBackend->addrScreenCopySource = 0x030064ec;
+		v3dBackend->addrFuncFlipBuffers  = 0x03007280;
+		v3dBackend->addrFuncFlipBuffers2 = 0x030072b8;
+		v3dBackend->addrFuncFlipBuffers3 = 0;
+		v3dBackend->addrActiveFrame      = 0x02038e0f;
+
+		v3dBackend->addrFuncTexture1pxTrapezoid = 0x0300591c;
+		v3dBackend->addrTex1UvRowDelta0 = 0x030052d4;
+		v3dBackend->addrTex1UvRowDelta1 = 0x030052d8;
+		v3dBackend->addrTex1Uv0         = 0x030052dc;
+		v3dBackend->addrTex1Uv1         = 0x030052e0;
+
+		v3dBackend->addrFuncTexture2pxTrapezoid = 0x030054e4;
+		v3dBackend->addrTex2UvRowDelta0 = 0x030052d4;
+		v3dBackend->addrTex2UvRowDelta1 = 0x030052d8;
+		v3dBackend->addrTex2Uv0         = 0x030052dc;
+		v3dBackend->addrTex2Uv1         = 0x030052e0;
+
+		v3dBackend->addrFuncColoredTrapezoid = 0x030050a0;
+
+		// game-specific
+
+		v3dBackend->addrFuncStuntmanSprite0 = 0x03005ffc;
+		v3dBackend->addrFuncStuntmanSprite1 = 0x030061e0;
+
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncStuntmanSprite0);
+		HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncStuntmanSprite1);
+	}
+	else if (ident == kIdentAsterixXXL || ident == kIdentAsterixXXL2in1)
 	{
 		v3dBackend->isAsterix = true;
 
@@ -78,6 +199,8 @@ void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint
 		v3dBackend->addrFuncCopyScreen   = 0x03006834;
 		v3dBackend->addrScreenCopySource = 0x03006a00;
 		v3dBackend->addrFuncFlipBuffers  = 0x030075b8;
+		v3dBackend->addrFuncFlipBuffers2 = 0;
+		v3dBackend->addrFuncFlipBuffers3 = 0;
 		v3dBackend->addrActiveFrame      = 0x0203dc1b;
 
 		v3dBackend->addrFuncTexture1pxTrapezoid = 0x03004940;
@@ -92,8 +215,7 @@ void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint
 		v3dBackend->addrTex2Uv0         = 0x03004734;
 		v3dBackend->addrTex2Uv1         = 0x03004738;
 
-		v3dBackend->addrFuncColoredTrapezoid = 0x030044e8;
-		v3dBackend->addrColoredPolyColor = 0x03004708;
+		v3dBackend->addrFuncColoredTrapezoid = 0x030044f0;
 
 		// game-specific
 
@@ -132,6 +254,8 @@ void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint
 		v3dBackend->addrFuncCopyScreen   = 0x03004a98;
 		v3dBackend->addrScreenCopySource = 0x03004b2c;
 		v3dBackend->addrFuncFlipBuffers  = 0x030078c0;
+		v3dBackend->addrFuncFlipBuffers2 = 0;
+		v3dBackend->addrFuncFlipBuffers3 = 0;
 		v3dBackend->addrActiveFrame      = 0x0203ab41;
 
 		v3dBackend->addrFuncTexture1pxTrapezoid = 0x03005454;
@@ -146,8 +270,7 @@ void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint
 		v3dBackend->addrTex2Uv0         = 0x030061dc;
 		v3dBackend->addrTex2Uv1         = 0x030061e0;
 
-		v3dBackend->addrFuncColoredTrapezoid = 0x03004ca8;
-		v3dBackend->addrColoredPolyColor = 0x03004ed8;
+		v3dBackend->addrFuncColoredTrapezoid = 0x03004cb0;
 
 		// game-specific
 
@@ -161,6 +284,8 @@ void HLE3DBackendV3DInit(struct HLE3DBackend* backend, struct HLE3D* hle3d, uint
 	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncClearScreen);
 	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncCopyScreen);
 	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncFlipBuffers);
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncFlipBuffers2);
+	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncFlipBuffers3);
 	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncColoredTrapezoid);
 	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncTexture1pxTrapezoid);
 	HLE3DAddBreakpoint(hle3d, v3dBackend->addrFuncTexture2pxTrapezoid);
@@ -174,10 +299,16 @@ void HLE3DBackendV3DDeinit(struct HLE3DBackend* backend)
 bool HLE3DBackendV3DIsGame(uint32_t ident)
 {
 	return
-		(ident == kIdentDriv3rEU) ||
-		(ident == kIdentDriv3rNA) ||
+		(ident == kIdentVRally3EU) ||
+		(ident == kIdentVRally3JP) ||
+		(ident == kIdentVRally3NA) ||
+		(ident == kIdentStuntmanEU) ||
+		(ident == kIdentStuntmanNA) ||
+		(ident == kIdentVRally3Stuntman2in1) ||
 		(ident == kIdentAsterixXXL) ||
-		(ident == kIdentAsterixXXL2in1);
+		(ident == kIdentAsterixXXL2in1) ||
+		(ident == kIdentDriv3rEU) ||
+		(ident == kIdentDriv3rNA);
 }
 
 void HLE3DBackendV3DHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint32_t pc)
@@ -185,10 +316,10 @@ void HLE3DBackendV3DHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint
 	struct HLE3DBackendV3D* v3dBackend = (struct HLE3DBackendV3D*)backend;
 
 	// prepare some parameters
-	uint8_t const frame = cpu->memory.load8(cpu, v3dBackend->addrActiveFrame, NULL);
 	struct RenderParams params;
+	uint8_t const frame = cpu->memory.load8(cpu, v3dBackend->addrActiveFrame, NULL);
 	params.frontBufferIndex = frame?1:0;
-	params.backBufferIndex = 1-frame;
+	params.backBufferIndex = frame?0:1;
 	params.scale = backend->h->renderScale;
 	params.rtWidth = GBA_VIDEO_HORIZONTAL_PIXELS * params.scale;
 	params.rtHeight = GBA_VIDEO_VERTICAL_PIXELS * params.scale;
@@ -207,8 +338,10 @@ void HLE3DBackendV3DHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint
 	}
 
 	// flip buffers after rendering
-	if (pc == v3dBackend->addrFuncFlipBuffers) {
-		FlipBuffers(v3dBackend, cpu);
+	if (pc == v3dBackend->addrFuncFlipBuffers ||
+	    pc == v3dBackend->addrFuncFlipBuffers2 ||
+	    pc == v3dBackend->addrFuncFlipBuffers3) {
+		FlipBuffers(v3dBackend, cpu, pc);
 		return;
 	}
 
@@ -238,6 +371,42 @@ void HLE3DBackendV3DHook(struct HLE3DBackend* backend, struct ARMCore* cpu, uint
 			v3dBackend->addrTex2UvRowDelta0,
 			v3dBackend->addrTex2UvRowDelta1);
 		return;
+	}
+
+	if (v3dBackend->isVRally3)
+	{
+		if (pc == v3dBackend->addrFuncVRally3ScaledEnvSprite) {
+			DrawVRally3ScaledEnvSprite(v3dBackend, cpu, &params);
+			return;
+		}
+
+		if (pc == v3dBackend->addrFuncVRally3VehicleInterior) {
+			DrawVRally3VehicleInterior(v3dBackend, cpu, &params);
+			return;
+		}
+
+		if (pc == v3dBackend->addrFuncVRally3VehicleSprite) {
+			DrawVRally3VehicleSprite(v3dBackend, cpu, &params);
+			return;
+		}
+
+		if (pc == v3dBackend->addrFuncVRally3DrawText) {
+			DrawVRally3Text(v3dBackend, cpu, &params);
+			return;
+		}
+	}
+
+	if (v3dBackend->isStuntman)
+	{
+		if (pc == v3dBackend->addrFuncStuntmanSprite0) {
+			DrawStuntmanSprite0(v3dBackend, cpu, &params);
+			return;
+		}
+
+		if (pc == v3dBackend->addrFuncStuntmanSprite1) {
+			DrawStuntmanSprite1(v3dBackend, cpu, &params);
+			return;
+		}
 	}
 
 	if (v3dBackend->isAsterix)
@@ -296,7 +465,9 @@ static void ClearScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, st
 {
 	UNUSED(cpu);
 
-	//printf("[HLE3D/V3D] ---- clear screen ----\n");
+	if (kDebugPrint) {
+		printf("[HLE3D/V3D] ---- clear screen %d ----\n", params->backBufferIndex);
+	}
 
 	backend->b.h->bgMode4active[params->backBufferIndex] = false;
 
@@ -305,10 +476,14 @@ static void ClearScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, st
 
 static void CopyScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
 {
-	//printf("[HLE3D/V3D] ---- copy screen ----\n");
 	backend->b.h->bgMode4active[params->backBufferIndex] = false;
 
 	uint32_t const srcAddr = cpu->memory.load32(cpu, backend->addrScreenCopySource, NULL);
+
+	if (kDebugPrint) {
+		printf("[HLE3D/V3D] ---- copy screen, to frame %d, from %08x ----\n", params->backBufferIndex, srcAddr);
+	}
+
 	struct GBA* gba = (struct GBA*)cpu->master;
 	struct GBAMemory* memory = &gba->memory;
 	uint8_t const srcRegion = (srcAddr >> 24);
@@ -346,11 +521,23 @@ static void CopyScreen(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, str
 	}
 }
 
-static void FlipBuffers(struct HLE3DBackendV3D* backend, struct ARMCore* cpu)
+static void FlipBuffers(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, uint32_t pc)
 {
-	//printf("[HLE3D/V3D] ---- flip buffers ----\n");
+	if (backend->isVRally3 || backend->isStuntman) {
+		// Since Stuntman and V-Rally 3 move the buffer flip around,
+		// we need to verify we're not in the wrong place.
+		// Maybe in future this could be a watchpoint rather than a code breakpoint
+		uint32_t const opcode = cpu->memory.load32(cpu, pc, NULL);
+		if (opcode != 0xe1c020b0) {
+			return;
+		}
+	}
+
 	uint16_t const value = cpu->gprs[2];
 	uint8_t const mode = (value & 0x7);
+	if (kDebugPrint) {
+		printf("[HLE3D/V3D] ---- flip buffers, mode %d frontbuffer %d (writing %04x to %08x) ----\n", mode, (value >> 4) & 1, value, cpu->gprs[0]);
+	}
 	if (mode == 4) {
 		uint8_t const frontBufferIndex = (value >> 4) & 1;
 		uint8_t const backBufferIndex = 1-frontBufferIndex;
@@ -367,7 +554,7 @@ static void FillColoredTrapezoid(struct HLE3DBackendV3D* backend, struct ARMCore
 	backend->b.h->bgMode4active[params->backBufferIndex] = true;
 	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
 
-	uint8_t const color = cpu->memory.load8(cpu, backend->addrColoredPolyColor, NULL);
+	uint8_t const color = cpu->gprs[11];
 
 	uint32_t const r5  = cpu->gprs[5];  // height
 	uint32_t const r7  = cpu->gprs[7];  // x1
@@ -378,6 +565,7 @@ static void FillColoredTrapezoid(struct HLE3DBackendV3D* backend, struct ARMCore
 	uint16_t const x1 = (r7 >> 16);
 	int16_t const dx0 = (r8 & 0xffff);
 	int16_t const dx1 = (r7 & 0xffff);
+
 
 	int const top = ((r10-0x06000000)%0xa000)/GBA_VIDEO_HORIZONTAL_PIXELS;
 
@@ -440,6 +628,257 @@ static void FillTexturedTrapezoid(struct HLE3DBackendV3D* backend, struct ARMCor
 			renderTargetPal[(top*params->scale+y)*params->rtWidth+x] = cpu->memory.load8(cpu, texPtr+(v&0xff00)+(u>>8), NULL);
 		}
 	}
+}
+
+
+
+static void DrawVRally3ScaledEnvSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
+{
+	// scaled 8bit sprite for environment details
+
+	// TODO: merge this with Stuntman/Asterix Env Sprite
+	// pull all the values from gprs rather than memory
+	// since the layout will be consistent
+	// just move the breakpoint ahead to after the ldmia?
+
+	backend->b.h->bgMode4active[params->backBufferIndex] = true;
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
+
+	uint32_t const r1 = cpu->gprs[1] + 4;
+
+	uint32_t const texPtr = cpu->memory.load32(cpu, r1+0,  NULL); // r11
+	int32_t  const y0     = cpu->memory.load32(cpu, r1+4,  NULL); // r0
+	int32_t  const x0     = cpu->memory.load32(cpu, r1+8,  NULL); // r3
+	int32_t  const v0     = cpu->memory.load32(cpu, r1+12, NULL); // r4
+	int32_t  const u0     = cpu->memory.load32(cpu, r1+16, NULL); // r7
+	int32_t  const y1     = cpu->memory.load32(cpu, r1+20, NULL); // r8
+	int32_t  const x1     = cpu->memory.load32(cpu, r1+24, NULL); // r9
+	int32_t  const v1     = cpu->memory.load32(cpu, r1+28, NULL); // r12
+	int32_t  const u1     = cpu->memory.load32(cpu, r1+32, NULL); // lr
+
+	if (kDebugDraw) {
+		HLE3DDebugDrawRect(backend->b.h, x0, y0, (x1 - x0), (y1 - y0), 0x0000ff);
+	}
+
+	int const left   = x0*params->scale;
+	int const right  = x1*params->scale;
+	int const top    = y0*params->scale;
+	int const bottom = y1*params->scale;
+
+	for (int y = top; y < bottom; ++y) {
+		if (y >= 0 && y < params->rtHeight) {
+			int const v = v0 + ((y-top)*(v1-v0))/(bottom-top);
+			for (int x = left; x < right; ++x) {
+				if (x >= 0 && x < params->rtWidth) {
+					int const u = u0 + ((x-left)*(u1-u0))/(right-left);
+					uint8_t const texel = cpu->memory.load8(cpu, texPtr+v*256+u, NULL);
+					if (texel != 0) {
+						renderTargetPal[y*params->rtWidth+x] = texel;
+					}
+				}
+			}
+		}
+	}
+}
+
+static void DrawVRally3VehicleInterior(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
+{
+	bool const isOpaque = (cpu->gprs[5] == 1);
+	int32_t left = cpu->gprs[6];
+	int32_t top = cpu->gprs[7];
+	int32_t const texStride = cpu->gprs[8];
+	int32_t height = cpu->gprs[9];
+	int32_t texPtr = cpu->gprs[10];
+
+	left += cpu->memory.load16(cpu, 0x02039278, NULL);
+	top += cpu->memory.load16(cpu, 0x0203927a, NULL);
+
+	int32_t width = texStride;
+
+	if (left < 0) {
+		width = left + texStride;
+		if (width <= 0)
+			return;
+		texPtr += -left;
+		left = 0;
+	}
+
+	if (top < 0) {
+		height += top;
+		if (height <= 0)
+			return;
+		texPtr += (-top * texStride);
+		top = 0;
+	}
+
+	int32_t const rightEdge = (left + width);
+	int32_t const rightEdgeOverlap = rightEdge - 240;
+	if (rightEdgeOverlap > 0) {
+		width -= rightEdgeOverlap;
+		if (width <= 0)
+			return;
+	}
+
+	int32_t const bottomEdge = (top + height);
+	int32_t const bottomEdgeOverlap = bottomEdge - 160;
+	if (bottomEdgeOverlap > 0) {
+		height -= bottomEdgeOverlap;
+		if (height <= 0)
+			return;
+	}
+
+	// vram dest bank
+	// cpu->memory.load32(cpu, 0x03003a84, NULL);
+
+	if (kDebugDraw) {
+		HLE3DDebugDrawRect(backend->b.h, left, top, width, height, 0x00ffff);
+	}
+
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
+
+	if (isOpaque) {
+		for (int gy=0;gy<height;++gy) {
+			for (int sy=0;sy<params->scale;++sy) {
+				int py = (top+gy)*params->scale+sy;
+				for (int gx=0;gx<width;++gx) {
+					uint8_t const pixel = cpu->memory.load8(cpu, texPtr+gy*texStride+gx, NULL);
+					for (int sx=0;sx<params->scale;++sx) {
+						int px = (left+gx)*params->scale+sx;
+						renderTargetPal[py*params->rtWidth+px] = pixel;
+					}
+				}
+			}
+		}
+	} else {
+		for (int gy=0;gy<height;++gy) {
+			for (int sy=0;sy<params->scale;++sy) {
+				int py = (top+gy)*params->scale+sy;
+				for (int gx=0;gx<width;++gx) {
+					uint8_t const pixel = cpu->memory.load8(cpu, texPtr+gy*texStride+gx, NULL);
+					if (pixel != 0) {
+						for (int sx=0;sx<params->scale;++sx) {
+							int px = (left+gx)*params->scale+sx;
+							renderTargetPal[py*params->rtWidth+px] = pixel;
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+static void DrawVRally3VehicleSprite(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
+{
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
+
+	int32_t const r1 = cpu->gprs[1];
+	int32_t const r2 = cpu->gprs[2];
+
+	int32_t const u0 = (r2 >> 16);
+	int32_t const v0 = (r1 >> 16);
+	int32_t const udelta = (r2 & 0xffff);
+	int32_t const vdelta = (r1 & 0xffff);
+
+	int32_t const height = cpu->gprs[5];
+	int32_t const width = cpu->gprs[6];
+	uint32_t const paletteMask = cpu->gprs[7]; // i think
+	uint32_t const spritePtr = cpu->gprs[11];
+	uint8_t const spriteStride = cpu->memory.load8(cpu, backend->addrVRally3VehicleSpriteStride, NULL);
+
+	uint32_t const r10 = cpu->gprs[10]; // destination vram pointer
+	int const pixelIndex = ((r10-0x06000000)%0xa000);
+	int const top = pixelIndex / GBA_VIDEO_HORIZONTAL_PIXELS;
+	int const left = pixelIndex % GBA_VIDEO_HORIZONTAL_PIXELS;
+
+	if (kDebugDraw) {
+		HLE3DDebugDrawRect(backend->b.h, left, top, width, height, 0xffffff);
+	}
+
+	int32_t const scaledLeft   = left * params->scale;
+	int32_t const scaledTop    = top  * params->scale;
+	int32_t const scaledRight  = scaledLeft + (width  * params->scale);
+	int32_t const scaledBottom = scaledTop  + (height * params->scale);
+
+	for (int y = scaledTop; y < scaledBottom; ++y) {
+		int32_t const v = (v0 + (vdelta*(y-scaledTop))/params->scale) >> 8;
+		for (int x = scaledLeft; x < scaledRight; ++x) {
+			int32_t const u = (u0 + (udelta*(x-scaledLeft))/params->scale) >> 8;
+			uint8_t const idx = (cpu->memory.load8(cpu, spritePtr + (v*spriteStride)+(u/2), NULL) >> ((u%2)?0:4)) & 0xf;
+			if (idx != 0) {
+				renderTargetPal[y*params->rtWidth+x] = idx | paletteMask;
+			}
+		}
+	}
+}
+
+static void DrawVRally3Text(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
+{
+	uint8_t* renderTargetPal = backend->b.h->bgMode4pal[params->backBufferIndex];
+
+	uint32_t stringStreamPtr = cpu->gprs[0];
+	uint32_t const glyphPixelsPtr = cpu->gprs[1];
+	uint32_t const glyphInfoTable = cpu->gprs[2];
+	uint32_t const glyphStride = cpu->gprs[3];
+	uint32_t const height = cpu->gprs[4];
+	//uint32_t r5 = cpu->gprs[5]; // destination vram bank
+
+	// loop over strings
+	while (true) {
+		uint8_t left = cpu->memory.load8(cpu, stringStreamPtr++, NULL);
+		if (left == 0xff) {
+			break;
+		}
+
+		uint8_t const top = cpu->memory.load8(cpu, stringStreamPtr++, NULL);
+
+		// loop over glyphs in the string
+		while (true) {
+			uint8_t const glyphId = cpu->memory.load8(cpu, stringStreamPtr++, NULL);
+			if (glyphId == 0x00) {
+				break;
+			}
+
+			uint32_t const glyphInfoPtr = glyphInfoTable + (glyphId*4);
+
+			uint16_t const glyphPixelsOffset = cpu->memory.load16(cpu, glyphInfoPtr+0, NULL); // id?
+			uint16_t const width = cpu->memory.load16(cpu, glyphInfoPtr+2, NULL); // width?
+
+			if (kDebugDraw) {
+				HLE3DDebugDrawRect(backend->b.h, left, top, width, height, 0xff00ff);
+			}
+
+			for (uint32_t gy = 0; gy < height; ++gy) {
+				for (uint32_t gx = 0; gx < width; ++gx) {
+					uint8_t const pixel = cpu->memory.load8(cpu, glyphPixelsPtr+glyphPixelsOffset+(glyphStride*gy)+gx, NULL);
+					if (pixel != 0) {
+						for (int sy = 0; sy < params->scale; ++sy) {
+							int py = (top+gy)*params->scale+sy;
+							for (int sx = 0; sx < params->scale; ++sx) {
+								int px = (left+gx)*params->scale+sx;
+								renderTargetPal[py*params->rtWidth+px] = pixel;
+							}
+						}
+					}
+				}
+			}
+			left += width;
+		}
+	}
+}
+
+
+
+static void DrawStuntmanSprite0(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
+{
+	DrawAsterixScaledEnvSprite(backend, cpu, params);
+}
+
+static void DrawStuntmanSprite1(struct HLE3DBackendV3D* backend, struct ARMCore* cpu, struct RenderParams const* params)
+{
+	// TODO: rewrite this based on the assembly?
+	// there's an off-by-one error on mirrored sprites in Stuntman?
+	// and some off-by-one errors in sizes too?
+	DrawAsterixScaledNpcSprite(backend, cpu, params);
 }
 
 
@@ -524,12 +963,12 @@ static void DrawAsterixScaledEnvSprite(struct HLE3DBackendV3D* backend, struct A
 	uint32_t const texPtr = cpu->memory.load32(cpu, r11+0,  NULL); // r11
 	int32_t  const y0     = cpu->memory.load32(cpu, r11+4,  NULL); // r0
 	int32_t  const x0     = cpu->memory.load32(cpu, r11+8,  NULL); // r3
-	uint32_t const v0     = cpu->memory.load32(cpu, r11+12, NULL); // r4
-	uint32_t const u0     = cpu->memory.load32(cpu, r11+16, NULL); // r7
+	int32_t  const v0     = cpu->memory.load32(cpu, r11+12, NULL); // r4
+	int32_t  const u0     = cpu->memory.load32(cpu, r11+16, NULL); // r7
 	int32_t  const y1     = cpu->memory.load32(cpu, r11+20, NULL); // r8
 	int32_t  const x1     = cpu->memory.load32(cpu, r11+24, NULL); // r9
-	uint32_t const v1     = cpu->memory.load32(cpu, r11+28, NULL); // r12
-	uint32_t const u1     = cpu->memory.load32(cpu, r11+32, NULL); // lr
+	int32_t  const v1     = cpu->memory.load32(cpu, r11+28, NULL); // r12
+	int32_t  const u1     = cpu->memory.load32(cpu, r11+32, NULL); // lr
 
 	if (kDebugDraw) {
 		HLE3DDebugDrawRect(backend->b.h, x0, y0, (x1 - x0), (y1 - y0), 0x0000ff);
@@ -568,12 +1007,12 @@ static void DrawAsterixScaledNpcSprite(struct HLE3DBackendV3D* backend, struct A
 	uint32_t const texPtr       = cpu->memory.load32(cpu, r11+8,  NULL); // r2
 	int32_t  const y0           = cpu->memory.load32(cpu, r11+12, NULL); // r3
 	int32_t  const x0           = cpu->memory.load32(cpu, r11+16, NULL); // r4
-	uint32_t const v0           = cpu->memory.load32(cpu, r11+20, NULL); // r5
-	uint32_t const u0           = cpu->memory.load32(cpu, r11+24, NULL); // r6
+	int32_t  const v0           = cpu->memory.load32(cpu, r11+20, NULL); // r5
+	int32_t  const u0           = cpu->memory.load32(cpu, r11+24, NULL); // r6
 	int32_t  const y1           = cpu->memory.load32(cpu, r11+28, NULL); // r7
 	int32_t  const x1           = cpu->memory.load32(cpu, r11+32, NULL); // r8
-	uint32_t const v1           = cpu->memory.load32(cpu, r11+36, NULL); // r9
-	uint32_t const u1           = cpu->memory.load32(cpu, r11+40, NULL); // r10
+	int32_t  const v1           = cpu->memory.load32(cpu, r11+36, NULL); // r9
+	int32_t  const u1           = cpu->memory.load32(cpu, r11+40, NULL); // r10
 
 	if (kDebugDraw) {
 		HLE3DDebugDrawRect(backend->b.h, x0, y0, (x1 - x0), (y1 - y0), 0x00ff00);
