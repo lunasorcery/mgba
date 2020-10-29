@@ -5,8 +5,9 @@
 #include <mgba-util/vfs.h>
 
 #include <mgba/hle3d/backend.h>
-#include <mgba/hle3d/backends/v3d.h>
+#include <mgba/hle3d/backends/downhilljam.h>
 #include <mgba/hle3d/backends/drome.h>
+#include <mgba/hle3d/backends/v3d.h>
 
 struct HLE3DBreakpoint {
 	struct HLE3DBreakpoint* next;
@@ -24,8 +25,9 @@ struct HLE3D {
 	struct HLE3DBreakpoint* breakpoints;
 
 	struct HLE3DBackend* activeBackend;
-	struct HLE3DBackendV3D backendV3D;
+	struct HLE3DBackendDownhillJam backendDownhillJam;
 	struct HLE3DBackendDrome backendDromeRacers;
+	struct HLE3DBackendV3D backendV3D;
 
 	int renderScale;
 

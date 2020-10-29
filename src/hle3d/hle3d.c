@@ -7,8 +7,9 @@ void HLE3DCreate(struct HLE3D* hle3d)
 {
 	hle3d->breakpoints = NULL;
 	hle3d->activeBackend = NULL;
-	HLE3DBackendV3DCreate(&hle3d->backendV3D);
+	HLE3DBackendDownhillJamCreate(&hle3d->backendDownhillJam);
 	HLE3DBackendDromeCreate(&hle3d->backendDromeRacers);
+	HLE3DBackendV3DCreate(&hle3d->backendV3D);
 
 	hle3d->renderScale = 0;
 
@@ -73,10 +74,18 @@ void HLE3DOnLoadROM(struct HLE3D* hle3d, struct VFile* vf)
 		memset(hle3d->bgMode4color[i], 0, 240*160*scale*scale*4);
 	}
 
-	if (hle3d->backendV3D.b.isGame(ident)) {
-		hle3d->activeBackend = &hle3d->backendV3D.b;
-	} else if (hle3d->backendDromeRacers.b.isGame(ident)) {
-		hle3d->activeBackend = &hle3d->backendDromeRacers.b;
+	struct HLE3DBackend* backends[]={
+		&hle3d->backendDownhillJam.b,
+		&hle3d->backendDromeRacers.b,
+		&hle3d->backendV3D.b,
+		NULL
+	};
+
+	for (int i = 0; backends[i]; ++i) {
+		if (backends[i]->isGame(ident)) {
+			hle3d->activeBackend = backends[i];
+			break;
+		}
 	}
 
 	if (hle3d->activeBackend) {
