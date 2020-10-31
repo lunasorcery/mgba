@@ -18,7 +18,7 @@ static void GBVideoSoftwareRendererWriteSGBPacket(struct GBVideoRenderer* render
 static void GBVideoSoftwareRendererWritePalette(struct GBVideoRenderer* renderer, int index, uint16_t value);
 static void GBVideoSoftwareRendererWriteVRAM(struct GBVideoRenderer* renderer, uint16_t address);
 static void GBVideoSoftwareRendererWriteOAM(struct GBVideoRenderer* renderer, uint16_t oam);
-static void GBVideoSoftwareRendererDrawRange(struct GBVideoRenderer* renderer, int startX, int endX, int y, struct GBObj* obj, size_t oamMax);
+static void GBVideoSoftwareRendererDrawRange(struct GBVideoRenderer* renderer, int startX, int endX, int y);
 static void GBVideoSoftwareRendererFinishScanline(struct GBVideoRenderer* renderer, int y);
 static void GBVideoSoftwareRendererFinishFrame(struct GBVideoRenderer* renderer);
 static void GBVideoSoftwareRendererEnableSGBBorder(struct GBVideoRenderer* renderer, bool enable);
@@ -257,37 +257,37 @@ static uint8_t GBVideoSoftwareRendererWriteVideoRegister(struct GBVideoRenderer*
 	bool wasWindow = _inWindow(softwareRenderer);
 	uint8_t wy = softwareRenderer->wy;
 	switch (address) {
-	case REG_LCDC:
+	case GB_REG_LCDC:
 		softwareRenderer->lcdc = value;
 		GBVideoSoftwareRendererUpdateWindow(softwareRenderer, wasWindow, _inWindow(softwareRenderer), wy);
 		break;
-	case REG_SCY:
+	case GB_REG_SCY:
 		softwareRenderer->scy = value;
 		break;
-	case REG_SCX:
+	case GB_REG_SCX:
 		softwareRenderer->scx = value;
 		break;
-	case REG_WY:
+	case GB_REG_WY:
 		softwareRenderer->wy = value;
 		GBVideoSoftwareRendererUpdateWindow(softwareRenderer, wasWindow, _inWindow(softwareRenderer), wy);
 		break;
-	case REG_WX:
+	case GB_REG_WX:
 		softwareRenderer->wx = value;
 		GBVideoSoftwareRendererUpdateWindow(softwareRenderer, wasWindow, _inWindow(softwareRenderer), wy);
 		break;
-	case REG_BGP:
+	case GB_REG_BGP:
 		softwareRenderer->lookup[0] = value & 3;
 		softwareRenderer->lookup[1] = (value >> 2) & 3;
 		softwareRenderer->lookup[2] = (value >> 4) & 3;
 		softwareRenderer->lookup[3] = (value >> 6) & 3;
 		break;
-	case REG_OBP0:
+	case GB_REG_OBP0:
 		softwareRenderer->lookup[0x20 + 0] = value & 3;
 		softwareRenderer->lookup[0x20 + 1] = (value >> 2) & 3;
 		softwareRenderer->lookup[0x20 + 2] = (value >> 4) & 3;
 		softwareRenderer->lookup[0x20 + 3] = (value >> 6) & 3;
 		break;
-	case REG_OBP1:
+	case GB_REG_OBP1:
 		softwareRenderer->lookup[0x24 + 0] = value & 3;
 		softwareRenderer->lookup[0x24 + 1] = (value >> 2) & 3;
 		softwareRenderer->lookup[0x24 + 2] = (value >> 4) & 3;
@@ -499,7 +499,31 @@ static void GBVideoSoftwareRendererWriteOAM(struct GBVideoRenderer* renderer, ui
 	// Nothing to do
 }
 
-static void GBVideoSoftwareRendererDrawRange(struct GBVideoRenderer* renderer, int startX, int endX, int y, struct GBObj* obj, size_t oamMax) {
+static void _cleanOAM(struct GBVideoSoftwareRenderer* renderer, int y) {
+	// TODO: GBC differences
+	// TODO: Optimize
+	int spriteHeight = 8;
+	if (GBRegisterLCDCIsObjSize(renderer->lcdc)) {
+		spriteHeight = 16;
+	}
+	int o = 0;
+	int i;
+	for (i = 0; i < 40 && o < 10; ++i) {
+		uint8_t oy = renderer->d.oam->obj[i].y;
+		if (y < oy - 16 || y >= oy - 16 + spriteHeight) {
+			continue;
+		}
+		// TODO: Sort
+		renderer->obj[o] = renderer->d.oam->obj[i];
+		++o;
+		if (o == 10) {
+			break;
+		}
+	}
+	renderer->objMax = o;
+}
+
+static void GBVideoSoftwareRendererDrawRange(struct GBVideoRenderer* renderer, int startX, int endX, int y) {
 	struct GBVideoSoftwareRenderer* softwareRenderer = (struct GBVideoSoftwareRenderer*) renderer;
 	softwareRenderer->lastY = y;
 	softwareRenderer->lastX = endX;
@@ -516,7 +540,7 @@ static void GBVideoSoftwareRendererDrawRange(struct GBVideoRenderer* renderer, i
 		if (GBRegisterLCDCIsWindow(softwareRenderer->lcdc) && wy == y && wx <= endX) {
 			softwareRenderer->hasWindow = true;
 		}
-		if (GBRegisterLCDCIsWindow(softwareRenderer->lcdc) && softwareRenderer->hasWindow && wx <= endX) {
+		if (GBRegisterLCDCIsWindow(softwareRenderer->lcdc) && softwareRenderer->hasWindow && wx <= endX && !softwareRenderer->d.disableWIN) {
 			if (wx > 0 && !softwareRenderer->d.disableBG) {
 				GBVideoSoftwareRendererDrawBackground(softwareRenderer, maps, startX, wx, softwareRenderer->scx - softwareRenderer->offsetScx, softwareRenderer->scy + y - softwareRenderer->offsetScy);
 			}
@@ -525,9 +549,7 @@ static void GBVideoSoftwareRendererDrawRange(struct GBVideoRenderer* renderer, i
 			if (GBRegisterLCDCIsWindowTileMap(softwareRenderer->lcdc)) {
 				maps += GB_SIZE_MAP;
 			}
-			if (!softwareRenderer->d.disableWIN) {
-				GBVideoSoftwareRendererDrawBackground(softwareRenderer, maps, wx, endX, -wx - softwareRenderer->offsetWx, y - wy - softwareRenderer->offsetWy);
-			}
+			GBVideoSoftwareRendererDrawBackground(softwareRenderer, maps, wx, endX, -wx - softwareRenderer->offsetWx, y - wy - softwareRenderer->offsetWy);
 		} else if (!softwareRenderer->d.disableBG) {
 			GBVideoSoftwareRendererDrawBackground(softwareRenderer, maps, startX, endX, softwareRenderer->scx - softwareRenderer->offsetScx, softwareRenderer->scy + y - softwareRenderer->offsetScy);
 		}
@@ -536,9 +558,12 @@ static void GBVideoSoftwareRendererDrawRange(struct GBVideoRenderer* renderer, i
 	}
 
 	if (GBRegisterLCDCIsObjEnable(softwareRenderer->lcdc) && !softwareRenderer->d.disableOBJ) {
-		size_t i;
-		for (i = 0; i < oamMax; ++i) {
-			GBVideoSoftwareRendererDrawObj(softwareRenderer, &obj[i], startX, endX, y);
+		if (startX == 0) {
+			_cleanOAM(softwareRenderer, y);
+		}
+		int i;
+		for (i = 0; i < softwareRenderer->objMax; ++i) {
+			GBVideoSoftwareRendererDrawObj(softwareRenderer, &softwareRenderer->obj[i], startX, endX, y);
 		}
 	}
 

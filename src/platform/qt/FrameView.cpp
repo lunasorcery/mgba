@@ -24,6 +24,7 @@
 #endif
 #ifdef M_CORE_GB
 #include <mgba/internal/gb/gb.h>
+#include <mgba/internal/gb/io.h>
 #include <mgba/internal/gb/memory.h>
 #endif
 
@@ -153,15 +154,43 @@ void FrameView::updateTilesGBA(bool) {
 
 		uint16_t* io = static_cast<GBA*>(m_controller->thread()->core->board)->memory.io;
 		QRgb backdrop = M_RGB5_TO_RGB8(static_cast<GBA*>(m_controller->thread()->core->board)->video.palette[0]);
-		m_gbaDispcnt = io[REG_DISPCNT >> 1];
-		int mode = GBARegisterDISPCNTGetMode(m_gbaDispcnt);
+		GBARegisterDISPCNT gbaDispcnt = io[REG_DISPCNT >> 1];
+		int mode = GBARegisterDISPCNTGetMode(gbaDispcnt);
 
 		std::array<bool, 4> enabled{
-			bool(GBARegisterDISPCNTIsBg0Enable(m_gbaDispcnt)),
-			bool(GBARegisterDISPCNTIsBg1Enable(m_gbaDispcnt)),
-			bool(GBARegisterDISPCNTIsBg2Enable(m_gbaDispcnt)),
-			bool(GBARegisterDISPCNTIsBg3Enable(m_gbaDispcnt)),
+			bool(GBARegisterDISPCNTIsBg0Enable(gbaDispcnt)),
+			bool(GBARegisterDISPCNTIsBg1Enable(gbaDispcnt)),
+			bool(GBARegisterDISPCNTIsBg2Enable(gbaDispcnt)),
+			bool(GBARegisterDISPCNTIsBg3Enable(gbaDispcnt)),
 		};
+
+		if (GBARegisterDISPCNTIsWin0Enable(gbaDispcnt)) {
+			m_queue.append({
+				{ LayerId::WINDOW, 0 },
+				!m_disabled.contains({ LayerId::WINDOW, 0 }),
+				{},
+				{}, {0, 0}, true, false
+			});
+		}
+
+		if (GBARegisterDISPCNTIsWin1Enable(gbaDispcnt)) {
+			m_queue.append({
+				{ LayerId::WINDOW, 1 },
+				!m_disabled.contains({ LayerId::WINDOW, 1 }),
+				{},
+				{}, {0, 0}, true, false
+			});
+		}
+
+		if (GBARegisterDISPCNTIsObjwinEnable(gbaDispcnt)) {
+			m_queue.append({
+				{ LayerId::WINDOW, 2 },
+				!m_disabled.contains({ LayerId::WINDOW, 2 }),
+				{},
+				{}, {0, 0}, true, false
+			});
+
+		}
 
 		for (int priority = 0; priority < 4; ++priority) {
 			for (int sprite = 0; sprite < 128; ++sprite) {
@@ -186,7 +215,7 @@ void FrameView::updateTilesGBA(bool) {
 					{ LayerId::SPRITE, sprite },
 					!m_disabled.contains({ LayerId::SPRITE, sprite }),
 					QPixmap::fromImage(obj),
-					{}, offset, false
+					{}, offset, false, false
 				});
 				if (m_queue.back().image.hasAlpha()) {
 					m_queue.back().mask = QRegion(m_queue.back().image.mask());
@@ -212,7 +241,7 @@ void FrameView::updateTilesGBA(bool) {
 					{ LayerId::BACKGROUND, bg },
 					!m_disabled.contains({ LayerId::BACKGROUND, bg }),
 					QPixmap::fromImage(compositeMap(bg, m_mapStatus[bg])),
-					{}, offset, true
+					{}, offset, true, false
 				});
 				if (m_queue.back().image.hasAlpha()) {
 					m_queue.back().mask = QRegion(m_queue.back().image.mask());
@@ -228,7 +257,7 @@ void FrameView::updateTilesGBA(bool) {
 			{ LayerId::BACKDROP },
 			!m_disabled.contains({ LayerId::BACKDROP }),
 			QPixmap::fromImage(backdropImage),
-			{}, {0, 0}, false
+			{}, {0, 0}, false, true
 		});
 		updateRendered();
 	}
@@ -237,7 +266,6 @@ void FrameView::updateTilesGBA(bool) {
 
 void FrameView::injectGBA() {
 	mVideoLogger* logger = m_vl->videoLogger;
-	mVideoLoggerInjectionPoint(logger, LOGGER_INJECTION_FIRST_SCANLINE);
 	GBA* gba = static_cast<GBA*>(m_vl->board);
 	gba->video.renderer->highlightBG[0] = false;
 	gba->video.renderer->highlightBG[1] = false;
@@ -271,15 +299,13 @@ void FrameView::injectGBA() {
 				gba->video.renderer->highlightBG[layer.id.index] = true;
 			}
 			break;
+		case LayerId::WINDOW:
+			m_vl->enableVideoLayer(m_vl, GBA_LAYER_WIN0 + layer.id.index, layer.enabled);
+			break;
 		}
 	}
 	if (m_overrideBackdrop.isValid()) {
 		mVideoLoggerInjectPalette(logger, 0, M_RGB8_TO_RGB5(m_overrideBackdrop.rgb()));
-	}
-	if (m_ui.disableScanline->checkState() == Qt::Checked) {
-		mVideoLoggerIgnoreAfterInjection(logger, (1 << DIRTY_PALETTE) | (1 << DIRTY_OAM) | (1 << DIRTY_REGISTER));
-	} else {
-		mVideoLoggerIgnoreAfterInjection(logger, 0);
 	}
 }
 #endif
@@ -292,13 +318,74 @@ void FrameView::updateTilesGB(bool) {
 	m_queue.clear();
 	{
 		CoreController::Interrupter interrupter(m_controller);
+		uint8_t* io = static_cast<GB*>(m_controller->thread()->core->board)->memory.io;
+		GBRegisterLCDC lcdc = io[GB_REG_LCDC];
+
+		for (int sprite = 0; sprite < 40; ++sprite) {
+			ObjInfo info;
+			lookupObj(sprite, &info);
+
+			if (!info.enabled) {
+				continue;
+			}
+
+			QPointF offset(info.x, info.y);
+			QImage obj(compositeObj(info));
+			if (info.hflip || info.vflip) {
+				obj = obj.mirrored(info.hflip, info.vflip);
+			}
+			m_queue.append({
+				{ LayerId::SPRITE, sprite },
+				!m_disabled.contains({ LayerId::SPRITE, sprite }),
+				QPixmap::fromImage(obj),
+				{}, offset, false, false
+			});
+			if (m_queue.back().image.hasAlpha()) {
+				m_queue.back().mask = QRegion(m_queue.back().image.mask());
+			} else {
+				m_queue.back().mask = QRegion(0, 0, m_queue.back().image.width(), m_queue.back().image.height());
+			}
+		}
+
+		if (GBRegisterLCDCIsWindow(lcdc)) {
+			m_queue.append({
+				{ LayerId::WINDOW },
+				!m_disabled.contains({ LayerId::WINDOW }),
+				{},
+				{}, {0, 0}, false, false
+			});
+		}
+
+		m_queue.append({
+			{ LayerId::BACKGROUND },
+			!m_disabled.contains({ LayerId::BACKGROUND }),
+			{},
+			{}, {0, 0}, false, false
+		});
+
 		updateRendered();
 	}
 	invalidateQueue(m_controller->screenDimensions());
 }
 
 void FrameView::injectGB() {
+	mVideoLogger* logger = m_vl->videoLogger;
+
+	m_vl->reset(m_vl);
 	for (const Layer& layer : m_queue) {
+		switch (layer.id.type) {
+		case LayerId::SPRITE:
+			if (!layer.enabled) {
+				mVideoLoggerInjectOAM(logger, layer.id.index << 2, 0);
+			}
+			break;
+		case LayerId::BACKGROUND:
+			m_vl->enableVideoLayer(m_vl, GB_LAYER_BACKGROUND, layer.enabled);
+			break;
+		case LayerId::WINDOW:
+			m_vl->enableVideoLayer(m_vl, GB_LAYER_WINDOW, layer.enabled);
+			break;
+		}
 	}
 }
 #endif
@@ -310,6 +397,8 @@ void FrameView::invalidateQueue(const QSize& dims) {
 	bool blockSignals = m_ui.queue->blockSignals(true);
 	QMutexLocker locker(&m_mutex);
 	if (m_vl) {
+		mVideoLogger* logger = m_vl->videoLogger;
+		mVideoLoggerInjectionPoint(logger, LOGGER_INJECTION_FIRST_SCANLINE);
 		switch (m_controller->platform()) {
 #ifdef M_CORE_GBA
 		case PLATFORM_GBA:
@@ -321,6 +410,11 @@ void FrameView::invalidateQueue(const QSize& dims) {
 			injectGB();
 			break;
 #endif
+		}
+		if (m_ui.disableScanline->checkState() == Qt::Checked) {
+			mVideoLoggerIgnoreAfterInjection(logger, (1 << DIRTY_PALETTE) | (1 << DIRTY_OAM) | (1 << DIRTY_REGISTER));
+		} else {
+			mVideoLoggerIgnoreAfterInjection(logger, 0);
 		}
 		m_vl->runFrame(m_vl);
 	}
@@ -335,7 +429,7 @@ void FrameView::invalidateQueue(const QSize& dims) {
 			item = m_ui.queue->item(i);
 		}
 		item->setText(layer.id.readable());
-		item->setFlags(Qt::ItemIsSelectable | Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+		item->setFlags(Qt::ItemIsSelectable | (layer.fixed ? Qt::NoItemFlags : Qt::ItemIsUserCheckable) | Qt::ItemIsEnabled);
 		item->setCheckState(layer.enabled ? Qt::Checked : Qt::Unchecked);
 		item->setData(Qt::UserRole, i);
 		item->setSelected(layer.id == m_active);
@@ -351,8 +445,12 @@ void FrameView::invalidateQueue(const QSize& dims) {
 		updateRendered();
 		composited = m_rendered;
 	} else {
+		QImage framebuffer(m_framebuffer);
 		m_ui.exportButton->setEnabled(true);
-		composited.convertFromImage(m_framebuffer);
+		if (framebuffer.size() != m_dims) {
+			framebuffer = framebuffer.copy({QPoint(), m_dims});
+		}
+		composited.convertFromImage(framebuffer);
 	}
 	m_composited = composited.scaled(m_dims * m_ui.magnification->value());
 	m_ui.compositedView->setPixmap(m_composited);
@@ -454,12 +552,20 @@ QString FrameView::LayerId::readable() const {
 		break;
 	case WINDOW:
 		typeStr = tr("Window");
+#ifdef M_CORE_GBA
+		if (index == 2) {
+			return tr("Objwin");
+		}
+#endif
 		break;
 	case SPRITE:
 		typeStr = tr("Sprite");
 		break;
 	case BACKDROP:
 		typeStr = tr("Backdrop");
+		break;
+	case FRAME:
+		typeStr = tr("Frame");
 		break;
 	}
 	if (index < 0) {

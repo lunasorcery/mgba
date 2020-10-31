@@ -61,6 +61,9 @@ void GBAVideoSoftwareRendererCreate(struct GBAVideoSoftwareRenderer* renderer) {
 	renderer->d.disableBG[2] = false;
 	renderer->d.disableBG[3] = false;
 	renderer->d.disableOBJ = false;
+	renderer->d.disableWIN[0] = false;
+	renderer->d.disableWIN[1] = false;
+	renderer->d.disableOBJWIN = false;
 
 	renderer->d.highlightBG[0] = false;
 	renderer->d.highlightBG[1] = false;
@@ -440,13 +443,13 @@ static void GBAVideoSoftwareRendererWritePalette(struct GBAVideoRenderer* render
 
 static void _breakWindow(struct GBAVideoSoftwareRenderer* softwareRenderer, struct WindowN* win, int y) {
 	if (win->v.end >= win->v.start) {
-		if (y >= win->v.end) {
+		if (y >= win->v.end + win->offsetY) {
 			return;
 		}
-		if (y < win->v.start) {
+		if (y < win->v.start + win->offsetY) {
 			return;
 		}
-	} else if (y >= win->v.end && y < win->v.start) {
+	} else if (y >= win->v.end + win->offsetY && y < win->v.start + win->offsetY) {
 		return;
 	}
 	if (win->h.end > GBA_VIDEO_HORIZONTAL_PIXELS || win->h.end < win->h.start) {
@@ -572,10 +575,10 @@ static void GBAVideoSoftwareRendererDrawScanline(struct GBAVideoRenderer* render
 	softwareRenderer->nWindows = 1;
 	if (GBARegisterDISPCNTIsWin0Enable(softwareRenderer->dispcnt) || GBARegisterDISPCNTIsWin1Enable(softwareRenderer->dispcnt) || GBARegisterDISPCNTIsObjwinEnable(softwareRenderer->dispcnt)) {
 		softwareRenderer->windows[0].control = softwareRenderer->winout;
-		if (GBARegisterDISPCNTIsWin1Enable(softwareRenderer->dispcnt)) {
+		if (GBARegisterDISPCNTIsWin1Enable(softwareRenderer->dispcnt) && !renderer->disableWIN[1]) {
 			_breakWindow(softwareRenderer, &softwareRenderer->winN[1], y);
 		}
-		if (GBARegisterDISPCNTIsWin0Enable(softwareRenderer->dispcnt)) {
+		if (GBARegisterDISPCNTIsWin0Enable(softwareRenderer->dispcnt) && !renderer->disableWIN[0]) {
 			_breakWindow(softwareRenderer, &softwareRenderer->winN[0], y);
 		}
 	} else {
@@ -644,17 +647,18 @@ static void GBAVideoSoftwareRendererDrawScanline(struct GBAVideoRenderer* render
 	}
 	if (softwareRenderer->forceTarget1 && (softwareRenderer->blendEffect == BLEND_DARKEN || softwareRenderer->blendEffect == BLEND_BRIGHTEN)) {
 		x = 0;
-		uint32_t mask = FLAG_REBLEND | FLAG_IS_BACKGROUND;
-		uint32_t match = FLAG_REBLEND;
-		if (GBARegisterDISPCNTIsObjwinEnable(softwareRenderer->dispcnt)) {
-			mask |= FLAG_OBJWIN;
-			if (GBAWindowControlIsBlendEnable(softwareRenderer->objwin.packed)) {
-				match |= FLAG_OBJWIN;
-			}
-		}
 		for (w = 0; w < softwareRenderer->nWindows; ++w) {
 			int end = softwareRenderer->windows[w].endX;
-			if (!GBAWindowControlIsBlendEnable(softwareRenderer->windows[w].control.packed)) {
+			uint32_t mask = FLAG_REBLEND | FLAG_IS_BACKGROUND;
+			uint32_t match = FLAG_REBLEND;
+			bool objBlend = GBAWindowControlIsBlendEnable(softwareRenderer->objwin.packed);
+			bool winBlend = GBAWindowControlIsBlendEnable(softwareRenderer->windows[w].control.packed);
+			if (GBARegisterDISPCNTIsObjwinEnable(softwareRenderer->dispcnt) && objBlend != winBlend) {
+				mask |= FLAG_OBJWIN;
+				if (objBlend) {
+					match |= FLAG_OBJWIN;
+				}
+			} else if (!winBlend) {
 				x = end;
 				continue;
 			}
